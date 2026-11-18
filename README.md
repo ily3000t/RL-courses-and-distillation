@@ -32,9 +32,16 @@ with its checkpoints, validation history, and episode records.
 | `uniform` | Sample a difficulty uniformly, then a training scene in that difficulty. |
 | `fixed` | Allocate equal decision-step budgets to Easy, Medium, and Hard in that order. |
 | `shuffled` | Shuffle the same blocks with a shared final Hard block. |
+| `plr` | Discover training scenes and replay ranked scenes according to SAC TD error and staleness. |
 
 Every group uses the same number of SAC decision steps and the same
 validation and test catalogs. An episode still active at a common block
 boundary is truncated and recorded as `schedule_cut`. The evaluation
 environment runs each scene to its natural task endpoint. Check
 `schedule.json` and `training_summary.json` for planned and realized budgets.
+
+PLR here is an [adaptation of Prioritized Level Replay](https://proceedings.mlr.press/v139/jiang21b.html).
+Each level is a scenario ID. Score completed rollouts using the mean absolute
+residual of the two SAC critics against the soft TD target. The early rollout
+log distinguishes unseen, warm-up, and scored replay selections. Inspect
+`plr_episodes.jsonl` to check visitation and scoring.

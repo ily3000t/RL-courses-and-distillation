@@ -1,6 +1,7 @@
 {
   "environment": {"sim_step": 0.1, "steps_per_action": 5, "warmup_seconds": 25, "max_decisions": 160},
   "budget": {"block_steps": 10000, "blocks_per_difficulty": 4},
+  "plr": {"min_seen_fraction": 0.2, "replay_probability": 0.5, "staleness_weight": 0.3, "temperature": 1.0},
   "scenarios": {"seed": 104729, "train_per_difficulty": 48, "validation_per_difficulty": 12, "test_per_difficulty": 24, "stress_hard": 24},
   "sac": {"device": "cuda", "learning_rate": 0.0003, "buffer_size": 200000, "learning_starts": 256, "batch_size": 256, "train_freq": 1, "gradient_steps": 1, "gamma": 0.99, "policy_kwargs": {"net_arch": [128, 128]}}
 }

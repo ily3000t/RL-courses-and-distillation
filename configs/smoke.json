@@ -1,6 +1,7 @@
 {
   "environment": {"sim_step": 0.1, "steps_per_action": 5, "warmup_seconds": 25, "max_decisions": 160},
   "budget": {"block_steps": 12, "blocks_per_difficulty": 2},
+  "plr": {"min_seen_fraction": 0.2, "replay_probability": 1.0, "staleness_weight": 0.3, "temperature": 1.0},
   "scenarios": {"seed": 104729, "train_per_difficulty": 3, "validation_per_difficulty": 1, "test_per_difficulty": 1, "stress_hard": 1},
   "sac": {"device": "cpu", "learning_rate": 0.0003, "buffer_size": 512, "learning_starts": 8, "batch_size": 8, "train_freq": 1, "gradient_steps": 1, "gamma": 0.99, "policy_kwargs": {"net_arch": [16, 16]}}
 }

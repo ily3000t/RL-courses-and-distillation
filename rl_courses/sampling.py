@@ -7,6 +7,7 @@ from .scenarios import DEMAND
 
 
 BASELINES = ("hard", "uniform", "fixed", "shuffled")
+METHODS = (*BASELINES, "plr")
 
 
 class BaselineSampler:

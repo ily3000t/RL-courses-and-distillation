@@ -1,11 +1,13 @@
 """Common SAC training loop and experiment logging."""
 
 import gymnasium as gym
+import numpy as np
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import BaseCallback
 
 from .environment import EnvConfig, MergeEnv
 from .evaluation import evaluate, validation_key
+from .plr import PrioritizedSampler, sac_td_score
 from .records import append_json, write_json
 from .sampling import BaselineSampler
 from .scenarios import DEMAND
@@ -21,12 +23,17 @@ class TrainingEnv(gym.Wrapper):
         self.episode_decisions = 0
         self.episode_return = 0.0
         self.steps_by_difficulty = {}
+        self.score_episode = None
 
     def reset(self, *, seed=None, options=None):
         self.scene = self.pick_scene(self.decisions)
         self.episode_decisions = 0
         self.episode_return = 0.0
-        return self.env.reset(seed=seed, options={"scene": self.scene})
+        observation, info = self.env.reset(seed=seed, options={"scene": self.scene})
+        if self.score_episode is not None:
+            self._last_observation = observation
+            self._transitions = []
+        return observation, info
 
     def step(self, action):
         observation, reward, terminated, truncated, info = self.env.step(action)
@@ -38,11 +45,17 @@ class TrainingEnv(gym.Wrapper):
         if not (terminated or truncated) and self.decisions % self.block_steps == 0:
             truncated = True
             info = {**info, "outcome": "schedule_cut"}
+        if self.score_episode is not None:
+            self._transitions.append((self._last_observation, np.asarray(action, dtype=np.float32),
+                                      reward, observation, terminated))
+            self._last_observation = observation
         if terminated or truncated:
             append_json(self.output / "training_episodes.jsonl", {
                 **info, "global_step": self.decisions, "episode_steps": self.episode_decisions,
                 "return": self.episode_return,
             })
+            if self.score_episode is not None:
+                self.score_episode(self.scene, self._transitions, self.decisions)
         return observation, reward, terminated, truncated, info
 
 
@@ -69,9 +82,15 @@ def train(config, catalog, seed, output):
     budget = config["budget"]
     block_steps = budget["block_steps"]
     blocks = len(DEMAND) * budget["blocks_per_difficulty"]
+    if block_steps < 1 or blocks < 1:
+        raise ValueError("Training budget must be positive.")
     if config["sac"].get("train_freq") != 1:
         raise ValueError("Use train_freq=1 for an exact decision budget at block boundaries.")
-    sampler = BaselineSampler(config["method"], catalog["train"], seed, **budget)
+    method = config["method"]
+    if method == "plr":
+        sampler = PrioritizedSampler(catalog["train"], seed, **config["plr"])
+    else:
+        sampler = BaselineSampler(method, catalog["train"], seed, **budget)
     write_json(output / "schedule.json", {
         "method": config["method"], "block_steps": block_steps, "total_blocks": blocks,
         "block_order": sampler.block_order,
@@ -83,6 +102,8 @@ def train(config, catalog, seed, output):
         validation_env = MergeEnv(output, environment)
         try:
             model = SAC("MlpPolicy", train_env, seed=seed, **config["sac"])
+            if method == "plr":
+                train_env.score_episode = make_plr_scorer(model, sampler, seed, output)
             evaluation = CheckpointEvaluation(validation_env, catalog["validation"], block_steps, output)
             # One continuous learn() call keeps progress-based SAC settings comparable.
             callback = BlockCallback(evaluation)
@@ -97,6 +118,19 @@ def train(config, catalog, seed, output):
             validation_env.close()
     finally:
         train_env.close()
+
+
+def make_plr_scorer(model, sampler, seed, output):
+    def score_episode(scene, transitions, step):
+        score = None
+        if model._n_updates > 0:
+            score = sac_td_score(model, transitions, seed + step)
+            sampler.update(scene.scene_id, score)
+        append_json(output / "plr_episodes.jsonl", {
+            "step": step, "scene_id": scene.scene_id, "score": score,
+            "selection": sampler.selection, "scored_scenes": len(sampler.scores),
+        })
+    return score_episode
 
 
 class BlockCallback(BaseCallback):
