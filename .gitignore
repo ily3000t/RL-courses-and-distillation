@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
+
+runs/
+checkpoints/
+logs/
+raw_results/
+trajectories/
+*.pt
+*.pth
+*.ckpt
+*.zip
+*.pkl
+*.npz
