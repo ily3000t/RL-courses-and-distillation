@@ -50,3 +50,22 @@ Each level is a scenario ID. Score completed rollouts using the mean absolute
 residual of the two SAC critics against the soft TD target. The early rollout
 log distinguishes unseen, warm-up, and scored replay selections. Inspect
 `plr_episodes.jsonl` to check visitation and scoring.
+
+## Compare all methods across shared seeds
+
+```powershell
+.\scripts\run_stage1.ps1 -Output runs/stage1-validation
+```
+
+That command trains and evaluates all five methods with seeds 42–46 on
+validation scenes. The report includes Hard learning curves, scene metrics
+for each seed, across-seed means and standard deviations, and the first
+validation checkpoint to meet both thresholds. It counts runs that never
+meet the thresholds separately. The defaults are provisional. Set
+`-SuccessThreshold` and `-CollisionThreshold` before a formal comparison.
+Use `-Config configs/smoke.json -Seeds 42` for a short end-to-end check.
+
+After freezing the protocol, use the `evaluate` command on the saved
+checkpoints with `--split test` or `--split stress`. The checkpoint is selected
+on Hard validation, in order of highest success rate, lowest collision
+rate, lowest timeout rate, and highest mean return.

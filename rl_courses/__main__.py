@@ -10,6 +10,7 @@ from .catalog import make_catalog, serialize_catalog
 from .environment import EnvConfig, MergeEnv
 from .evaluation import evaluate
 from .records import manifest, new_output, read_json, write_json
+from .reporting import summarize_suite
 from .sampling import METHODS
 from .scenarios import Scene
 from .training import train
@@ -69,6 +70,17 @@ def run_with_status(output, operation):
     write_json(path, {"state": "completed"})
 
 
+def report_command(args):
+    result = summarize_suite(args.suite, args.split, args.success_threshold, args.collision_threshold)
+    config = {"split": args.split, "success_threshold": args.success_threshold,
+              "collision_threshold": args.collision_threshold, "suite": str(args.suite.resolve())}
+    meta = manifest(config, result["seeds"], "cpu", args.allow_dirty)
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    write_json(output / "report.json", result)
+    print(output / "report.json")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(required=True)
@@ -84,7 +96,13 @@ def main():
     eval_parser.add_argument("--checkpoint", choices=("best", "final"), default="best")
     eval_parser.add_argument("--device", default="cpu")
     eval_parser.set_defaults(command=evaluate_command)
-    for command in (train_parser, eval_parser):
+    report_parser = commands.add_parser("report")
+    report_parser.add_argument("--suite", type=Path, required=True)
+    report_parser.add_argument("--split", choices=("validation", "test", "stress"), default="validation")
+    report_parser.add_argument("--success-threshold", type=float, default=0.90)
+    report_parser.add_argument("--collision-threshold", type=float, default=0.05)
+    report_parser.set_defaults(command=report_command)
+    for command in (train_parser, eval_parser, report_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()
