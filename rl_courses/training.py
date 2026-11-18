@@ -1,14 +1,14 @@
 """Common SAC training loop and experiment logging."""
 
 import gymnasium as gym
-import numpy as np
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import BaseCallback
 
-from .catalog import group_by_difficulty
 from .environment import EnvConfig, MergeEnv
 from .evaluation import evaluate, validation_key
 from .records import append_json, write_json
+from .sampling import BaselineSampler
+from .scenarios import DEMAND
 
 
 class TrainingEnv(gym.Wrapper):
@@ -66,20 +66,19 @@ class CheckpointEvaluation:
 
 
 def train(config, catalog, seed, output):
-    block_steps = config["budget"]["block_steps"]
-    blocks = 3 * config["budget"]["blocks_per_difficulty"]
-    if block_steps < 1 or blocks < 1:
-        raise ValueError("Training budget must be positive.")
+    budget = config["budget"]
+    block_steps = budget["block_steps"]
+    blocks = len(DEMAND) * budget["blocks_per_difficulty"]
     if config["sac"].get("train_freq") != 1:
         raise ValueError("Use train_freq=1 for an exact decision budget at block boundaries.")
-    rng = np.random.default_rng(seed)
-    hard_scenes = group_by_difficulty(catalog["train"])["hard"]
-
-    def pick_scene(_step):
-        return hard_scenes[int(rng.integers(len(hard_scenes)))]
+    sampler = BaselineSampler(config["method"], catalog["train"], seed, **budget)
+    write_json(output / "schedule.json", {
+        "method": config["method"], "block_steps": block_steps, "total_blocks": blocks,
+        "block_order": sampler.block_order,
+    })
 
     environment = EnvConfig(**config["environment"])
-    train_env = TrainingEnv(MergeEnv(output, environment), pick_scene, block_steps, output)
+    train_env = TrainingEnv(MergeEnv(output, environment), sampler.pick, block_steps, output)
     try:
         validation_env = MergeEnv(output, environment)
         try:

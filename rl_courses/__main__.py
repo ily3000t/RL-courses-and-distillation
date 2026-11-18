@@ -10,12 +10,14 @@ from .catalog import make_catalog, serialize_catalog
 from .environment import EnvConfig, MergeEnv
 from .evaluation import evaluate
 from .records import manifest, new_output, read_json, write_json
+from .sampling import BASELINES
 from .scenarios import Scene
 from .training import train
 
 
 def train_command(args):
     config = read_json(args.config)
+    config["method"] = args.method or config.get("method", "hard")
     if args.device:
         config["sac"]["device"] = args.device
     if not 0 <= args.seed < 2**31:
@@ -72,6 +74,7 @@ def main():
     commands = parser.add_subparsers(required=True)
     train_parser = commands.add_parser("train")
     train_parser.add_argument("--config", type=Path, required=True)
+    train_parser.add_argument("--method", choices=BASELINES)
     train_parser.add_argument("--seed", type=int, required=True)
     train_parser.add_argument("--device")
     train_parser.set_defaults(command=train_command)
