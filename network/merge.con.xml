@@ -1,0 +1,5 @@
+<connections>
+    <connection from="main" to="merge" fromLane="0" toLane="1"/>
+    <connection from="ramp" to="merge" fromLane="0" toLane="0"/>
+    <connection from="merge" to="out" fromLane="1" toLane="0"/>
+</connections>
