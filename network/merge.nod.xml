@@ -2,6 +2,6 @@
     <node id="main_start" x="0" y="3.2"/>
     <node id="ramp_start" x="340" y="-55"/>
     <node id="merge_start" x="600" y="0" type="priority"/>
-    <node id="merge_end" x="850" y="0" type="priority"/>
+    <node id="merge_end" x="660" y="0" type="priority"/>
     <node id="destination" x="1200" y="0"/>
 </nodes>

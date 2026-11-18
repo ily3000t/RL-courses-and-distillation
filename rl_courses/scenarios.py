@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 import numpy as np
 
 
-DEMAND = {"easy": 450, "medium": 850, "hard": 1350}
+DEMAND = {"easy": 450, "medium": 1100, "hard": 2000}
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,8 @@ class Scene:
 def write_routes(scene: Scene, path: Path, warmup: float, horizon: float) -> None:
     rng = np.random.default_rng(scene.seed)
     root = ET.Element("routes")
-    ET.SubElement(root, "vType", id="traffic", length="5", sigma="0.5", maxSpeed="31")
+    ET.SubElement(root, "vType", id="traffic", length="5", sigma="0.5", maxSpeed="31",
+                  speedFactor="1")
     ET.SubElement(root, "vType", id="agent", length="5", sigma="0", maxSpeed="31",
                   accel="3", decel="5")
     ET.SubElement(root, "route", id="through", edges="main merge out")

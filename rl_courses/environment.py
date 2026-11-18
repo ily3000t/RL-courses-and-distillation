@@ -15,7 +15,7 @@ from .scenarios import DEMAND, Scene, write_routes
 
 EGO = "ego"
 MERGE_START_X = 600.0
-MERGE_END_X = 850.0
+MERGE_END_X = 660.0
 OBSERVATION_FIELDS = (
     "speed", "acceleration", "distance_to_merge_start", "distance_to_merge_end",
     "in_target_lane", "front_gap", "front_relative_speed", "front_present",

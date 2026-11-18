@@ -26,6 +26,11 @@ with its checkpoints, validation history, and episode records.
 
 ## Stage-one comparisons
 
+The network has a 60 m merge lane. The three mainline demands are 450, 1100,
+and 2000 vehicles/hour. They share one geometry, observation, action mapping
+and reward. SUMO enforces safe speeds and checks the gaps for lane-change
+requests. The stress catalog raises Hard demand and uses separate SUMO seeds.
+
 | Method | Training scene selection |
 | --- | --- |
 | `hard` | Sample only Hard scenes. |
