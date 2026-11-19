@@ -2,7 +2,6 @@
 
 import argparse
 import hashlib
-import math
 from pathlib import Path
 
 from stable_baselines3 import SAC
@@ -11,6 +10,7 @@ from .catalog import make_catalog, serialize_catalog
 from .diagnostics import comparison_inputs, run_diagnostics
 from .environment import EnvConfig, MergeEnv
 from .evaluation import evaluate
+from .opportunities import DEFAULT_REFERENCE_SPEEDS, build_profiles, validate_speeds
 from .records import manifest, new_output, read_json, write_json
 from .reporting import summarize_suite
 from .sampling import METHODS
@@ -84,9 +84,8 @@ def report_command(args):
 
 
 def diagnose_command(args):
-    speeds = args.reference_speed or [12, 19, 26]
-    if len(set(speeds)) != len(speeds) or not all(math.isfinite(speed) and 0 < speed <= 31 for speed in speeds):
-        raise ValueError("Reference speeds must be distinct and in (0, 31] m/s.")
+    speeds = args.reference_speed or DEFAULT_REFERENCE_SPEEDS
+    validate_speeds(speeds)
     inputs, scenes = comparison_inputs(args.run, args.split, args.scene)
     config = {
         "split": args.split, "scene_ids": [scene.scene_id for scene in scenes],
@@ -99,6 +98,22 @@ def diagnose_command(args):
     write_json(output / "manifest.json", meta)
     run_with_status(output, lambda: run_diagnostics(inputs, scenes, speeds, output))
     print(output / "episodes.json")
+
+
+def profile_command(args):
+    speeds = args.reference_speed or DEFAULT_REFERENCE_SPEEDS
+    validate_speeds(speeds)
+    config = read_json(args.config)
+    scenes = make_catalog(**config["scenarios"])["train"]
+    metadata = manifest(
+        {"environment": config["environment"], "scenarios": config["scenarios"],
+         "reference_speeds_mps": speeds},
+        config["scenarios"]["seed"], "cpu", args.allow_dirty,
+    )
+    output = new_output(args.output)
+    write_json(output / "manifest.json", metadata)
+    run_with_status(output, lambda: build_profiles(scenes, config["environment"], speeds, output))
+    print(output / "opportunities.json")
 
 
 def main():
@@ -128,7 +143,11 @@ def main():
     diagnose_parser.add_argument("--scene", action="append")
     diagnose_parser.add_argument("--reference-speed", action="append", type=float)
     diagnose_parser.set_defaults(command=diagnose_command)
-    for command in (train_parser, eval_parser, report_parser, diagnose_parser):
+    profile_parser = commands.add_parser("profile")
+    profile_parser.add_argument("--config", type=Path, required=True)
+    profile_parser.add_argument("--reference-speed", action="append", type=float)
+    profile_parser.set_defaults(command=profile_command)
+    for command in (train_parser, eval_parser, report_parser, diagnose_parser, profile_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()

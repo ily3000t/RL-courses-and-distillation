@@ -83,3 +83,17 @@ to the merge end, front/rear gaps and observed request blocking.
 The gap proxy compares SUMO neighbor clearances against secure gaps
 while ego is on the merge lane with more than 3 m remaining. It measures
 an available opportunity under the current trajectory.
+
+## Profile training opportunities
+
+```powershell
+& $python -B -m rl_courses profile --config configs/stage1.json --output runs/stage1-opportunities
+```
+
+Profiles run three fixed approach speeds (12, 19 and 26 m/s) on the
+training catalog. The opportunity group within each density is based on
+how many reference approaches SUMO actually allowed to merge. The
+diagnostic clearance proxy missed observed accepted requests, so it is
+kept as a trace field. A zero count means that these probes found no
+accepted merge. The bundle stores the setup, scene seeds and profiling
+cost separately from SAC interaction steps.
