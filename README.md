@@ -97,3 +97,16 @@ diagnostic clearance proxy missed observed accepted requests, so it is
 kept as a trace field. A zero count means that these probes found no
 accepted merge. The bundle stores the setup, scene seeds and profiling
 cost separately from SAC interaction steps.
+
+```powershell
+& $python -B -m rl_courses train --config configs/stage1.json --method opportunity-progress --profiles runs/stage1-opportunities/opportunities.json --seed 42 --output runs/opportunity-42
+```
+
+`opportunity-progress` and `density-progress` use the same scheduler.
+They start from a uniform density and uniform scene within density.
+After warmup, the scheduler favors groups with improving success across
+two windows of completed episodes and reserves a fraction of sampling
+for the original distribution. Scheduler cutoffs are excluded from
+feedback. Selection probabilities and observed outcomes are recorded
+in `curriculum_episodes.jsonl`. The density ablation groups by demand.
+The opportunity method subdivides each density using its probe results.

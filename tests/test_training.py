@@ -6,8 +6,9 @@ import unittest
 import torch
 
 from rl_courses.catalog import make_catalog
+from rl_courses.opportunities import build_profiles
 from rl_courses.records import ROOT, read_json
-from rl_courses.sampling import METHODS
+from rl_courses.sampling import BASELINE_METHODS
 from rl_courses.training import train
 
 
@@ -21,7 +22,7 @@ class TrainingTest(unittest.TestCase):
     def test_all_baselines_use_the_same_decision_budget(self):
         root = ROOT / "runs"
         root.mkdir(exist_ok=True)
-        for method in METHODS:
+        for method in BASELINE_METHODS:
             with self.subTest(method=method), TemporaryDirectory(dir=root) as folder:
                 output = Path(folder)
                 config = read_json(ROOT / "configs" / "smoke.json")
@@ -42,3 +43,25 @@ class TrainingTest(unittest.TestCase):
                             (output / "plr_episodes.jsonl").read_text().splitlines()]
                     self.assertTrue(any(row["score"] is not None for row in rows))
                     self.assertTrue(any(row["selection"] == "replay" for row in rows))
+
+    def test_progress_methods_accept_feedback_from_real_rollouts(self):
+        root = ROOT / "runs"
+        root.mkdir(exist_ok=True)
+        with TemporaryDirectory(dir=root) as folder:
+            output = Path(folder)
+            config = read_json(ROOT / "configs" / "smoke.json")
+            config["budget"]["block_steps"] = 42
+            catalog = make_catalog(**config["scenarios"])
+            build_profiles(catalog["train"], config["environment"], (12, 19, 26), output)
+            profiles = read_json(output / "opportunities.json")
+            for method in ("density-progress", "opportunity-progress"):
+                with self.subTest(method=method):
+                    run = output / method
+                    run.mkdir()
+                    config["method"] = method
+                    train(config, catalog, 42, run, profiles)
+                    self.assertEqual(read_json(run / "training_summary.json")["steps"], 252)
+                    rows = [json.loads(line) for line in
+                            (run / "curriculum_episodes.jsonl").read_text().splitlines()]
+                    self.assertTrue(any(row["used_for_progress"] for row in rows))
+                    self.assertTrue(any(not row["warmup"] for row in rows))

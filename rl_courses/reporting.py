@@ -5,7 +5,7 @@ import json
 from statistics import mean, stdev
 
 from .records import read_json
-from .sampling import METHODS
+from .sampling import BASELINE_METHODS
 
 
 METRICS = ("success_rate", "collision_rate", "timeout_rate", "missed_merge_rate")
@@ -66,7 +66,7 @@ def summarize_suite(root, split, success, collision):
 
     if not methods:
         raise ValueError(f"No completed experiment directories found at {root}.")
-    if set(methods) != set(METHODS):
+    if set(methods) != set(BASELINE_METHODS):
         raise ValueError(f"Expected completed runs for all five methods at {root}.")
     expected = set(next(iter(methods.values())))
     if any(set(runs) != expected for runs in methods.values()):

@@ -7,7 +7,9 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 from .environment import EnvConfig, MergeEnv
 from .evaluation import evaluate, validation_key
+from .opportunities import opportunity_groups
 from .plr import PrioritizedSampler, sac_td_score
+from .progress import ProgressSampler
 from .records import append_json, write_json
 from .sampling import BaselineSampler
 from .scenarios import DEMAND
@@ -24,6 +26,7 @@ class TrainingEnv(gym.Wrapper):
         self.episode_return = 0.0
         self.steps_by_difficulty = {}
         self.score_episode = None
+        self.observe_episode = None
 
     def reset(self, *, seed=None, options=None):
         self.scene = self.pick_scene(self.decisions)
@@ -56,6 +59,8 @@ class TrainingEnv(gym.Wrapper):
             })
             if self.score_episode is not None:
                 self.score_episode(self.scene, self._transitions, self.decisions)
+            if self.observe_episode is not None:
+                self.observe_episode(self.scene, info["outcome"], self.decisions)
         return observation, reward, terminated, truncated, info
 
 
@@ -78,7 +83,7 @@ class CheckpointEvaluation:
         print(f"step {step}: Hard validation {summary['hard']}", flush=True)
 
 
-def train(config, catalog, seed, output):
+def train(config, catalog, seed, output, profiles=None):
     budget = config["budget"]
     block_steps = budget["block_steps"]
     blocks = len(DEMAND) * budget["blocks_per_difficulty"]
@@ -87,14 +92,26 @@ def train(config, catalog, seed, output):
     if config["sac"].get("train_freq") != 1:
         raise ValueError("Use train_freq=1 for an exact decision budget at block boundaries.")
     method = config["method"]
+    scenes = catalog["train"]
+    progress_groups = None
     if method == "plr":
-        sampler = PrioritizedSampler(catalog["train"], seed, **config["plr"])
+        sampler = PrioritizedSampler(scenes, seed, **config["plr"])
+    elif method in ("density-progress", "opportunity-progress"):
+        if method == "opportunity-progress":
+            if profiles is None:
+                raise ValueError("Opportunity-progress requires a training profile bundle.")
+            progress_groups = opportunity_groups(profiles, scenes, config["environment"])
+        else:
+            progress_groups = {scene.scene_id: scene.difficulty for scene in scenes}
+        sampler = ProgressSampler(scenes, progress_groups, seed, **config["progress"])
     else:
-        sampler = BaselineSampler(method, catalog["train"], seed, **budget)
+        sampler = BaselineSampler(method, scenes, seed, **budget)
     write_json(output / "schedule.json", {
         "method": config["method"], "block_steps": block_steps, "total_blocks": blocks,
         "block_order": sampler.block_order,
     })
+    if progress_groups is not None:
+        write_json(output / "curriculum_groups.json", progress_groups)
 
     environment = EnvConfig(**config["environment"])
     train_env = TrainingEnv(MergeEnv(output, environment), sampler.pick, block_steps, output)
@@ -104,6 +121,8 @@ def train(config, catalog, seed, output):
             model = SAC("MlpPolicy", train_env, seed=seed, **config["sac"])
             if method == "plr":
                 train_env.score_episode = make_plr_scorer(model, sampler, seed, output)
+            if progress_groups is not None:
+                train_env.observe_episode = make_progress_recorder(sampler, output)
             evaluation = CheckpointEvaluation(validation_env, catalog["validation"], block_steps, output)
             # One continuous learn() call keeps progress-based SAC settings comparable.
             callback = BlockCallback(evaluation)
@@ -131,6 +150,16 @@ def make_plr_scorer(model, sampler, seed, output):
             "selection": sampler.selection, "scored_scenes": len(sampler.scores),
         })
     return score_episode
+
+
+def make_progress_recorder(sampler, output):
+    def observe(scene, outcome, step):
+        append_json(output / "curriculum_episodes.jsonl", {
+            "step": step, "scene_id": scene.scene_id, "outcome": outcome,
+            "used_for_progress": outcome != "schedule_cut", **sampler.selection,
+        })
+        sampler.observe(scene, outcome)
+    return observe
 
 
 class BlockCallback(BaseCallback):

@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import json
 from pathlib import Path
 
 from stable_baselines3 import SAC
@@ -26,11 +27,26 @@ def train_command(args):
     if not 0 <= args.seed < 2**31:
         raise ValueError("Use a nonnegative signed 31-bit seed.")
     catalog = make_catalog(**config["scenarios"])
+    profiles = None
+    if config["method"] == "opportunity-progress" and args.profiles is None:
+        raise ValueError("Pass --profiles with the output of the profile command.")
+    if args.profiles is not None and config["method"] != "opportunity-progress":
+        raise ValueError("--profiles is used only by opportunity-progress.")
     meta = manifest(config, args.seed, config["sac"]["device"], args.allow_dirty)
+    if args.profiles is not None:
+        profile_bytes = args.profiles.read_bytes()
+        profiles = json.loads(profile_bytes)
+        meta["opportunity_profiles"] = {
+            "path": str(args.profiles.resolve()), "sha256": hashlib.sha256(profile_bytes).hexdigest(),
+            "profile_source_sha256": profiles["profile_source_sha256"],
+            "reference_speeds_mps": profiles["reference_speeds_mps"],
+            "probe_episodes": profiles["probe_episodes"],
+            "probe_simulated_seconds_after_spawn": profiles["probe_simulated_seconds_after_spawn"],
+        }
     output = new_output(args.output)
     write_json(output / "manifest.json", meta)
     write_json(output / "scenes.json", serialize_catalog(catalog))
-    run_with_status(output, lambda: train(config, catalog, args.seed, output))
+    run_with_status(output, lambda: train(config, catalog, args.seed, output, profiles))
 
 
 def evaluate_command(args):
@@ -122,6 +138,7 @@ def main():
     train_parser = commands.add_parser("train")
     train_parser.add_argument("--config", type=Path, required=True)
     train_parser.add_argument("--method", choices=METHODS)
+    train_parser.add_argument("--profiles", type=Path)
     train_parser.add_argument("--seed", type=int, required=True)
     train_parser.add_argument("--device")
     train_parser.set_defaults(command=train_command)
