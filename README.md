@@ -69,3 +69,17 @@ After freezing the protocol, use the `evaluate` command on the saved
 checkpoints with `--split test` or `--split stress`. The checkpoint is selected
 on Hard validation, in order of highest success rate, lowest collision
 rate, lowest timeout rate, and highest mean return.
+
+## Diagnose merge failures
+
+```powershell
+& $python -B -m rl_courses diagnose --run runs/stage1-baselines-v1/plr/seed-42/train --run runs/stage1-baselines-v1/hard/seed-42/train --split stress --scene stress-hard-000 --scene stress-hard-001 --output runs/stress-replay
+```
+
+The replay uses saved policies and constant-target-speed approaches under
+the same SUMO safety settings. It writes local episode summaries and
+per-tick traces with acceleration, merge intent, lane position relative
+to the merge end, front/rear gaps and observed request blocking.
+The gap proxy compares SUMO neighbor clearances against secure gaps
+while ego is on the merge lane with more than 3 m remaining. It measures
+an available opportunity under the current trajectory.

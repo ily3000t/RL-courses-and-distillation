@@ -2,11 +2,13 @@
 
 import argparse
 import hashlib
+import math
 from pathlib import Path
 
 from stable_baselines3 import SAC
 
 from .catalog import make_catalog, serialize_catalog
+from .diagnostics import comparison_inputs, run_diagnostics
 from .environment import EnvConfig, MergeEnv
 from .evaluation import evaluate
 from .records import manifest, new_output, read_json, write_json
@@ -81,6 +83,24 @@ def report_command(args):
     print(output / "report.json")
 
 
+def diagnose_command(args):
+    speeds = args.reference_speed or [12, 19, 26]
+    if len(set(speeds)) != len(speeds) or not all(math.isfinite(speed) and 0 < speed <= 31 for speed in speeds):
+        raise ValueError("Reference speeds must be distinct and in (0, 31] m/s.")
+    inputs, scenes = comparison_inputs(args.run, args.split, args.scene)
+    config = {
+        "split": args.split, "scene_ids": [scene.scene_id for scene in scenes],
+        "reference_speeds_mps": speeds, "environment": inputs[0]["environment"],
+        "checkpoints": [{key: value for key, value in row.items() if key != "scenes"}
+                        for row in inputs],
+    }
+    meta = manifest(config, [row["seed"] for row in inputs], "cpu", args.allow_dirty)
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    run_with_status(output, lambda: run_diagnostics(inputs, scenes, speeds, output))
+    print(output / "episodes.json")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(required=True)
@@ -102,7 +122,13 @@ def main():
     report_parser.add_argument("--success-threshold", type=float, default=0.90)
     report_parser.add_argument("--collision-threshold", type=float, default=0.05)
     report_parser.set_defaults(command=report_command)
-    for command in (train_parser, eval_parser, report_parser):
+    diagnose_parser = commands.add_parser("diagnose")
+    diagnose_parser.add_argument("--run", type=Path, action="append", required=True)
+    diagnose_parser.add_argument("--split", choices=("validation", "test", "stress"), default="stress")
+    diagnose_parser.add_argument("--scene", action="append")
+    diagnose_parser.add_argument("--reference-speed", action="append", type=float)
+    diagnose_parser.set_defaults(command=diagnose_command)
+    for command in (train_parser, eval_parser, report_parser, diagnose_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()

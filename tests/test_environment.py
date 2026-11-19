@@ -34,6 +34,15 @@ class MergeEnvTest(unittest.TestCase):
         scene = Scene("replay", "hard", 42, 1350)
         self.assertEqual(self.rollout(scene, 1), self.rollout(scene, 1))
 
+    def test_trace_preserves_replay_and_records_merge_requests(self):
+        scene = Scene("trace", "easy", 25, 1)
+        original = self.rollout(scene, 1)
+        ticks = []
+        self.env.trace_tick = ticks.append
+        self.assertEqual(original, self.rollout(scene, 1))
+        self.assertTrue(any(row["gap_proxy_open"] for row in ticks))
+        self.assertTrue(any(row["requested"] and row["lane_after"] == "merge_1" for row in ticks))
+
     def test_ego_needs_a_lane_change_to_complete_merge(self):
         scene = Scene("quiet", "easy", 25, 1)
         self.assertEqual(self.rollout(scene, 1)[-1][-1]["outcome"], "success")

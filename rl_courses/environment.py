@@ -10,6 +10,7 @@ import gymnasium as gym
 import numpy as np
 import traci
 
+from .merge_trace import after_tick, before_tick
 from .scenarios import DEMAND, Scene, write_routes
 
 
@@ -42,8 +43,9 @@ class MergeEnv(gym.Env):
 
     metadata = {"render_modes": []}
 
-    def __init__(self, work_dir: Path, config: EnvConfig = EnvConfig()):
+    def __init__(self, work_dir: Path, config: EnvConfig = EnvConfig(), *, trace_tick=None):
         self.config = config
+        self.trace_tick = trace_tick
         self.action_space = gym.spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32)
         self.observation_space = gym.spaces.Box(
             -1.0, 1.0, shape=(len(OBSERVATION_FIELDS),), dtype=np.float32
@@ -177,9 +179,14 @@ class MergeEnv(gym.Env):
         outcome = None
         end_x = start_x
         for _ in range(self.config.steps_per_action):
-            if merge_intent > 0 and vehicles.getLaneID(EGO) == "merge_0":
+            requested = bool(merge_intent > 0 and vehicles.getLaneID(EGO) == "merge_0")
+            if self.trace_tick is not None:
+                trace = before_tick(self._connection, EGO, MERGE_END_X)
+            if requested:
                 vehicles.changeLane(EGO, 1, self.config.sim_step)
             self._connection.simulationStep()
+            if self.trace_tick is not None:
+                self.trace_tick(after_tick(self._connection, EGO, trace, requested, acceleration, merge_intent))
             if EGO in self._connection.simulation.getCollidingVehiclesIDList():
                 outcome = "collision"
                 break
