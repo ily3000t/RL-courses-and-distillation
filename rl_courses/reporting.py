@@ -4,11 +4,12 @@ from collections import defaultdict
 import json
 from statistics import mean, stdev
 
+from .evaluation import summarize
 from .records import read_json
-from .sampling import BASELINE_METHODS
+from .sampling import BASELINE_METHODS, CURRICULUM_METHODS
 
 
-METRICS = ("success_rate", "collision_rate", "timeout_rate", "missed_merge_rate")
+METRICS = ("success_rate", "collision_rate", "timeout_rate", "pre_merge_timeout_rate", "missed_merge_rate")
 
 
 def _completed(path):
@@ -20,11 +21,12 @@ def _moments(values):
     return {"mean": mean(values), "sd": stdev(values) if len(values) > 1 else None}
 
 
-def summarize_suite(root, split, success, collision):
+def summarize_suite(root, split, success, collision, comparison="baselines"):
     if not (0 <= success <= 1 and 0 <= collision <= 1):
         raise ValueError("Pass rate thresholds in [0, 1].")
     methods = defaultdict(dict)
     reference = None
+    profile_sha = None
     for run in sorted(root.glob("*/seed-*/train")):
         evaluation = run.parent / split
         _completed(run)
@@ -34,15 +36,27 @@ def summarize_suite(root, split, success, collision):
         config = metadata["config"].copy()
         method = config.pop("method")
         seed = metadata["seed"]
+        if method == "opportunity-progress":
+            current_profile_sha = metadata["opportunity_profiles"]["sha256"]
+            if profile_sha is not None and current_profile_sha != profile_sha:
+                raise ValueError(f"Opportunity profile bundle differs across seeds: {run}")
+            profile_sha = current_profile_sha
         if seed in methods[method]:
             raise ValueError(f"Duplicate run for {method}, seed {seed}.")
         if (eval_metadata["split"] != split or eval_metadata["seed"] != seed
                 or eval_metadata["config"] != metadata["config"]
-                or eval_metadata["training_git_sha"] != metadata["git_sha"]
-                or eval_metadata["git_sha"] != metadata["git_sha"]):
+                or eval_metadata["training_git_sha"] != metadata["git_sha"]):
             raise ValueError(f"Evaluation provenance differs from its training run: {evaluation}")
+        catalog = read_json(run / "scenes.json")
+        evaluation_catalog = eval_metadata.get("evaluation_catalog", catalog[split])
+        episodes = read_json(evaluation / "episodes.json")
+        expected_scenes = [(row["scene_id"], row["seed"], row["difficulty"]) for row in evaluation_catalog]
+        observed_scenes = [(row["scene_id"], row["scene_seed"], row["difficulty"]) for row in episodes]
+        if expected_scenes != observed_scenes:
+            raise ValueError(f"Recorded episodes differ from the evaluation catalog: {evaluation}")
         protocol = (config, metadata["git_sha"], metadata["versions"],
-                    eval_metadata["versions"], read_json(run / "scenes.json"))
+                    eval_metadata["versions"], catalog, eval_metadata["git_sha"],
+                    evaluation_catalog, eval_metadata.get("checkpoint_kind", "best"))
         if reference is None:
             reference = protocol
         elif reference != protocol:
@@ -58,7 +72,7 @@ def summarize_suite(root, split, success, collision):
         ), None)
         methods[method][seed] = {
             "seed": seed,
-            "evaluation": read_json(evaluation / "summary.json")["hard"],
+            "evaluation": summarize([row for row in episodes if row["difficulty"] == "hard"]),
             "validation_steps_to_target": first_hit,
             "hard_validation": history,
             "training": read_json(run / "training_summary.json"),
@@ -66,8 +80,9 @@ def summarize_suite(root, split, success, collision):
 
     if not methods:
         raise ValueError(f"No completed experiment directories found at {root}.")
-    if set(methods) != set(BASELINE_METHODS):
-        raise ValueError(f"Expected completed runs for all five methods at {root}.")
+    expected_methods = BASELINE_METHODS if comparison == "baselines" else CURRICULUM_METHODS
+    if set(methods) != set(expected_methods):
+        raise ValueError(f"Expected completed runs for {', '.join(expected_methods)} at {root}.")
     expected = set(next(iter(methods.values())))
     if any(set(runs) != expected for runs in methods.values()):
         raise ValueError("Each method must include the same training seeds.")
@@ -85,6 +100,8 @@ def summarize_suite(root, split, success, collision):
             "steps_to_target_when_met": _moments(hits) if hits else None,
             "runs": trials,
         }
-    return {"git_sha": reference[1], "split": split, "seeds": sorted(expected),
+    return {"git_sha": reference[1], "evaluation_git_sha": reference[5],
+            "comparison": comparison, "split": split, "seeds": sorted(expected),
+            "opportunity_profile_sha256": profile_sha,
             "success_threshold": success, "collision_threshold": collision,
             "methods": summaries}

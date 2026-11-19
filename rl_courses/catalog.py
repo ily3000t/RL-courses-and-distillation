@@ -39,5 +39,22 @@ def group_by_difficulty(scenes):
     return dict(groups)
 
 
+def make_stress_holdout(catalog, seed, count):
+    if not 0 <= seed < 2**31:
+        raise ValueError("Stress holdout seed must be a nonnegative signed 31-bit integer.")
+    used = {row["seed"] for scenes in catalog.values() for row in scenes}
+    if not 1 <= count <= 2**31 - len(used):
+        raise ValueError("Stress holdout size must be positive and fit the seed space.")
+    rng = np.random.default_rng(seed)
+    scenes = []
+    while len(scenes) < count:
+        candidate = int(rng.integers(2**31))
+        if candidate not in used:
+            used.add(candidate)
+            scenes.append(Scene(f"holdout-{seed}-{len(scenes):03d}", "hard", candidate,
+                                round(DEMAND["hard"] * 1.25)))
+    return scenes
+
+
 def serialize_catalog(catalog):
     return {split: [asdict(scene) for scene in scenes] for split, scenes in catalog.items()}

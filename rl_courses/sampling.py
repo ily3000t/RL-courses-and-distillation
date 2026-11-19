@@ -8,7 +8,9 @@ from .scenarios import DEMAND
 
 BASELINES = ("hard", "uniform", "fixed", "shuffled")
 BASELINE_METHODS = (*BASELINES, "plr")
-METHODS = (*BASELINE_METHODS, "density-progress", "opportunity-progress")
+PROGRESS_METHODS = ("density-progress", "opportunity-progress")
+CURRICULUM_METHODS = ("plr", *PROGRESS_METHODS)
+METHODS = (*BASELINE_METHODS, *PROGRESS_METHODS)
 
 
 class BaselineSampler:

@@ -1,7 +1,7 @@
 from collections import Counter
 import unittest
 
-from rl_courses.catalog import make_catalog
+from rl_courses.catalog import make_catalog, make_stress_holdout, serialize_catalog
 from rl_courses.sampling import BaselineSampler
 
 
@@ -17,6 +17,14 @@ class SamplingTest(unittest.TestCase):
         all_scenes = [scene for scenes in self.catalog.values() for scene in scenes]
         self.assertEqual(len({scene.seed for scene in all_scenes}), len(all_scenes))
         self.assertEqual(len({scene.scene_id for scene in all_scenes}), len(all_scenes))
+
+    def test_new_stress_seeds_are_reproducible_and_disjoint(self):
+        catalog = serialize_catalog(self.catalog)
+        holdout = make_stress_holdout(catalog, 91, 24)
+        self.assertEqual(holdout, make_stress_holdout(catalog, 91, 24))
+        old_seeds = {scene.seed for scenes in self.catalog.values() for scene in scenes}
+        self.assertEqual(len({scene.seed for scene in holdout}), 24)
+        self.assertFalse(old_seeds.intersection(scene.seed for scene in holdout))
 
     def test_shuffled_matches_fixed_budget_and_ends_on_hard(self):
         fixed = BaselineSampler("fixed", self.train, 42, 12, 4)

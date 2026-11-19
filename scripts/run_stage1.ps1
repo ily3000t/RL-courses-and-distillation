@@ -3,7 +3,10 @@ param(
     [string]$Config = 'configs/stage1.json',
     [string]$Python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe',
     [int[]]$Seeds = @(42, 43, 44, 45, 46),
+    [ValidateSet('baselines', 'curriculum')][string]$Comparison = 'baselines',
+    [string]$Profiles = '',
     [ValidateSet('validation', 'test', 'stress')][string]$Split = 'validation',
+    [Nullable[int]]$StressSeed,
     [string]$Device = '',
     [double]$SuccessThreshold = 0.90,
     [double]$CollisionThreshold = 0.05
@@ -22,21 +25,37 @@ $deviceArgs = @()
 if ($Device) {
     $deviceArgs = @('--device', $Device)
 }
+$methods = @('hard', 'uniform', 'fixed', 'shuffled', 'plr')
+$profileArgs = @()
+if ($Comparison -eq 'curriculum') {
+    if (-not $Profiles) { throw 'Supply -Profiles for the curriculum comparison.' }
+    $profilePath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Profiles)
+    if (-not (Test-Path -LiteralPath $profilePath -PathType Leaf)) { throw "Missing profile: $profilePath" }
+    $methods = @('plr', 'density-progress', 'opportunity-progress')
+    $profileArgs = @('--profiles', $profilePath)
+}
+$holdoutArgs = @()
+if ($PSBoundParameters.ContainsKey('StressSeed')) {
+    if ($Split -ne 'stress') { throw 'Set -Split stress when supplying -StressSeed.' }
+    $holdoutArgs = @('--stress-seed', $StressSeed)
+}
 
 Push-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 try {
-    foreach ($method in 'hard', 'uniform', 'fixed', 'shuffled', 'plr') {
+    foreach ($method in $methods) {
+        $methodArgs = @()
+        if ($method -eq 'opportunity-progress') { $methodArgs = $profileArgs }
         foreach ($seed in $Seeds) {
             $job = Join-Path $outputPath "$method/seed-$seed"
             $train = Join-Path $job 'train'
             $evaluation = Join-Path $job $Split
-            & $Python -B -m rl_courses train --config $configPath --method $method --seed $seed --output $train @deviceArgs
+            & $Python -B -m rl_courses train --config $configPath --method $method --seed $seed --output $train @deviceArgs @methodArgs
             if ($LASTEXITCODE -ne 0) { throw "Training failed for $method (seed $seed)." }
-            & $Python -B -m rl_courses evaluate --run $train --split $Split --output $evaluation
+            & $Python -B -m rl_courses evaluate --run $train --split $Split --output $evaluation @holdoutArgs
             if ($LASTEXITCODE -ne 0) { throw "Evaluation failed for $method (seed $seed)." }
         }
     }
-    & $Python -B -m rl_courses report --suite $outputPath --split $Split --output (Join-Path $outputPath 'report') --success-threshold $SuccessThreshold --collision-threshold $CollisionThreshold
+    & $Python -B -m rl_courses report --suite $outputPath --split $Split --comparison $Comparison --output (Join-Path $outputPath 'report') --success-threshold $SuccessThreshold --collision-threshold $CollisionThreshold
     if ($LASTEXITCODE -ne 0) { throw 'Generating the stage-one report failed.' }
 }
 finally {

@@ -6,9 +6,6 @@ import math
 import numpy as np
 
 
-CURRICULUM_METHODS = ("plr", "density-progress", "opportunity-progress")
-
-
 class ProgressSampler:
     block_order = None
 

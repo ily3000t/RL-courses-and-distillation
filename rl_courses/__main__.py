@@ -1,13 +1,14 @@
 """Command-line entry points for training and evaluating the stage-one policies."""
 
 import argparse
+from dataclasses import asdict
 import hashlib
 import json
 from pathlib import Path
 
 from stable_baselines3 import SAC
 
-from .catalog import make_catalog, serialize_catalog
+from .catalog import make_catalog, make_stress_holdout, serialize_catalog
 from .diagnostics import comparison_inputs, run_diagnostics
 from .environment import EnvConfig, MergeEnv
 from .evaluation import evaluate
@@ -52,13 +53,25 @@ def train_command(args):
 def evaluate_command(args):
     training = read_json(args.run / "manifest.json")
     config = training["config"]
-    scenes = [Scene(**row) for row in read_json(args.run / "scenes.json")[args.split]]
+    catalog = read_json(args.run / "scenes.json")
+    if (args.stress_seed is not None or args.stress_count is not None) and args.split != "stress":
+        raise ValueError("A new stress holdout requires --split stress.")
+    if args.stress_count is not None and args.stress_seed is None:
+        raise ValueError("--stress-count requires --stress-seed.")
+    if args.stress_seed is None:
+        scenes = [Scene(**row) for row in catalog[args.split]]
+    else:
+        count = args.stress_count if args.stress_count is not None else len(catalog["stress"])
+        scenes = make_stress_holdout(catalog, args.stress_seed, count)
     checkpoint = (args.run / f"{args.checkpoint}.zip").resolve(strict=True)
     meta = manifest(config, training["seed"], args.device, args.allow_dirty)
     meta.update({
         "training_git_sha": training["git_sha"], "split": args.split,
         "checkpoint": str(checkpoint), "checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
         "evaluation_scenes": [scene.scene_id for scene in scenes],
+        "evaluation_catalog": [asdict(scene) for scene in scenes],
+        "stress_holdout_seed": args.stress_seed,
+        "checkpoint_kind": args.checkpoint,
     })
     output = new_output(args.output)
     write_json(output / "manifest.json", meta)
@@ -89,9 +102,11 @@ def run_with_status(output, operation):
 
 
 def report_command(args):
-    result = summarize_suite(args.suite, args.split, args.success_threshold, args.collision_threshold)
+    result = summarize_suite(args.suite, args.split, args.success_threshold,
+                             args.collision_threshold, args.comparison)
     config = {"split": args.split, "success_threshold": args.success_threshold,
-              "collision_threshold": args.collision_threshold, "suite": str(args.suite.resolve())}
+              "collision_threshold": args.collision_threshold, "suite": str(args.suite.resolve()),
+              "comparison": args.comparison}
     meta = manifest(config, result["seeds"], "cpu", args.allow_dirty)
     output = new_output(args.output)
     write_json(output / "manifest.json", meta)
@@ -146,11 +161,14 @@ def main():
     eval_parser.add_argument("--run", type=Path, required=True)
     eval_parser.add_argument("--split", choices=("validation", "test", "stress"), default="test")
     eval_parser.add_argument("--checkpoint", choices=("best", "final"), default="best")
+    eval_parser.add_argument("--stress-seed", type=int)
+    eval_parser.add_argument("--stress-count", type=int)
     eval_parser.add_argument("--device", default="cpu")
     eval_parser.set_defaults(command=evaluate_command)
     report_parser = commands.add_parser("report")
     report_parser.add_argument("--suite", type=Path, required=True)
     report_parser.add_argument("--split", choices=("validation", "test", "stress"), default="validation")
+    report_parser.add_argument("--comparison", choices=("baselines", "curriculum"), default="baselines")
     report_parser.add_argument("--success-threshold", type=float, default=0.90)
     report_parser.add_argument("--collision-threshold", type=float, default=0.05)
     report_parser.set_defaults(command=report_command)

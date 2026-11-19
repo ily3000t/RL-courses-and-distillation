@@ -11,7 +11,7 @@ from .opportunities import opportunity_groups
 from .plr import PrioritizedSampler, sac_td_score
 from .progress import ProgressSampler
 from .records import append_json, write_json
-from .sampling import BaselineSampler
+from .sampling import BaselineSampler, PROGRESS_METHODS
 from .scenarios import DEMAND
 
 
@@ -96,7 +96,7 @@ def train(config, catalog, seed, output, profiles=None):
     progress_groups = None
     if method == "plr":
         sampler = PrioritizedSampler(scenes, seed, **config["plr"])
-    elif method in ("density-progress", "opportunity-progress"):
+    elif method in PROGRESS_METHODS:
         if method == "opportunity-progress":
             if profiles is None:
                 raise ValueError("Opportunity-progress requires a training profile bundle.")

@@ -35,6 +35,9 @@ def summarize(episodes):
     return {
         "episodes": count,
         "mean_return": sum(row["return"] for row in episodes) / count,
+        "pre_merge_timeout_rate": sum(
+            row["outcome"] == "timeout" and not row["merged"] for row in episodes
+        ) / count,
         **{f"{outcome}_rate": counts[outcome] / count for outcome in OUTCOMES},
     }
 

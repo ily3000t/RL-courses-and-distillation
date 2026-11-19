@@ -110,3 +110,18 @@ for the original distribution. Scheduler cutoffs are excluded from
 feedback. Selection probabilities and observed outcomes are recorded
 in `curriculum_episodes.jsonl`. The density ablation groups by demand.
 The opportunity method subdivides each density using its probe results.
+
+## Compare the opportunity curriculum with PLR and the density ablation
+
+```powershell
+.\scripts\run_stage1.ps1 -Comparison curriculum -Profiles runs/stage1-opportunities/opportunities.json -Output runs/stage1-curriculum-validation
+```
+
+Use the same locked stress seed across methods after the protocol is
+finalized. To evaluate already trained checkpoints on that separate
+catalog, use `evaluate --split stress --stress-seed <integer>` with each
+saved `--run` and its own new output directory. The runner accepts
+`-Split stress -StressSeed <integer>` for the same mode. Every holdout is
+disjoint from the original catalog and is saved in the evaluation manifest.
+The comparison reports Hard success, pre-merge timeout and missed merge
+rates. Select and freeze the holdout seed without inspecting its results.
