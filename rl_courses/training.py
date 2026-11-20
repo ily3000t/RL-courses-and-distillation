@@ -11,7 +11,7 @@ from .opportunities import opportunity_groups
 from .plr import PrioritizedSampler, sac_td_score
 from .progress import ProgressSampler
 from .records import append_json, write_json
-from .sampling import BaselineSampler, PROGRESS_METHODS
+from .sampling import BACKOFF_METHOD, OPPORTUNITY_METHODS, BaselineSampler, PROGRESS_METHODS
 from .scenarios import DEMAND
 
 
@@ -97,13 +97,14 @@ def train(config, catalog, seed, output, profiles=None):
     if method == "plr":
         sampler = PrioritizedSampler(scenes, seed, **config["plr"])
     elif method in PROGRESS_METHODS:
-        if method == "opportunity-progress":
+        if method in OPPORTUNITY_METHODS:
             if profiles is None:
                 raise ValueError("Opportunity-progress requires a training profile bundle.")
             progress_groups = opportunity_groups(profiles, scenes, config["environment"])
         else:
             progress_groups = {scene.scene_id: scene.difficulty for scene in scenes}
-        sampler = ProgressSampler(scenes, progress_groups, seed, **config["progress"])
+        sampler = ProgressSampler(scenes, progress_groups, seed, **config["progress"],
+                                  density_backoff=method == BACKOFF_METHOD)
     else:
         sampler = BaselineSampler(method, scenes, seed, **budget)
     write_json(output / "schedule.json", {

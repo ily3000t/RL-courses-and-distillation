@@ -15,7 +15,7 @@ from .evaluation import evaluate
 from .opportunities import DEFAULT_REFERENCE_SPEEDS, build_profiles, validate_speeds
 from .records import manifest, new_output, read_json, write_json
 from .reporting import summarize_suite
-from .sampling import METHODS
+from .sampling import COMPARISONS, METHODS, OPPORTUNITY_METHODS
 from .scenarios import Scene
 from .training import train
 
@@ -29,10 +29,10 @@ def train_command(args):
         raise ValueError("Use a nonnegative signed 31-bit seed.")
     catalog = make_catalog(**config["scenarios"])
     profiles = None
-    if config["method"] == "opportunity-progress" and args.profiles is None:
+    if config["method"] in OPPORTUNITY_METHODS and args.profiles is None:
         raise ValueError("Pass --profiles with the output of the profile command.")
-    if args.profiles is not None and config["method"] != "opportunity-progress":
-        raise ValueError("--profiles is used only by opportunity-progress.")
+    if args.profiles is not None and config["method"] not in OPPORTUNITY_METHODS:
+        raise ValueError("--profiles requires an opportunity-progress method.")
     meta = manifest(config, args.seed, config["sac"]["device"], args.allow_dirty)
     if args.profiles is not None:
         profile_bytes = args.profiles.read_bytes()
@@ -168,7 +168,7 @@ def main():
     report_parser = commands.add_parser("report")
     report_parser.add_argument("--suite", type=Path, required=True)
     report_parser.add_argument("--split", choices=("validation", "test", "stress"), default="validation")
-    report_parser.add_argument("--comparison", choices=("baselines", "curriculum"), default="baselines")
+    report_parser.add_argument("--comparison", choices=COMPARISONS, default="baselines")
     report_parser.add_argument("--success-threshold", type=float, default=0.90)
     report_parser.add_argument("--collision-threshold", type=float, default=0.05)
     report_parser.set_defaults(command=report_command)

@@ -125,3 +125,20 @@ saved `--run` and its own new output directory. The runner accepts
 disjoint from the original catalog and is saved in the evaluation manifest.
 The comparison reports Hard success, pre-merge timeout and missed merge
 rates. Select and freeze the holdout seed without inspecting its results.
+
+## Compare the density backoff ablation
+
+```powershell
+.\scripts\run_stage1.ps1 -Comparison backoff -Profiles runs/stage1-opportunities/opportunities.json -Output runs/stage1-backoff-validation
+```
+
+The runner trains `opportunity-progress` and `opportunity-progress-backoff`
+with the same seeds, profile bundle, and interaction budget. The backoff
+variant tracks the latest completed episodes in each opportunity subgroup
+and its parent density. With `w` episodes per full window and `n` observed
+episodes in the subgroup, it compares two local windows of length
+`k = min(w, floor(n/2))`. Its priority score blends the resulting local
+progress with density progress using local weight `k/w`. With fewer than
+two subgroup episodes, the parent provides the full score. Once the
+subgroup has two full windows, its score is entirely local. The curriculum
+log records parent progress, subgroup counts, local scores, and weights.

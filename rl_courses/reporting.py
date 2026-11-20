@@ -6,7 +6,7 @@ from statistics import mean, stdev
 
 from .evaluation import summarize
 from .records import read_json
-from .sampling import BASELINE_METHODS, CURRICULUM_METHODS
+from .sampling import COMPARISONS, OPPORTUNITY_METHODS
 
 
 METRICS = ("success_rate", "collision_rate", "timeout_rate", "pre_merge_timeout_rate", "missed_merge_rate")
@@ -36,10 +36,10 @@ def summarize_suite(root, split, success, collision, comparison="baselines"):
         config = metadata["config"].copy()
         method = config.pop("method")
         seed = metadata["seed"]
-        if method == "opportunity-progress":
+        if method in OPPORTUNITY_METHODS:
             current_profile_sha = metadata["opportunity_profiles"]["sha256"]
             if profile_sha is not None and current_profile_sha != profile_sha:
-                raise ValueError(f"Opportunity profile bundle differs across seeds: {run}")
+                raise ValueError(f"Opportunity profile bundle differs across runs: {run}")
             profile_sha = current_profile_sha
         if seed in methods[method]:
             raise ValueError(f"Duplicate run for {method}, seed {seed}.")
@@ -80,7 +80,7 @@ def summarize_suite(root, split, success, collision, comparison="baselines"):
 
     if not methods:
         raise ValueError(f"No completed experiment directories found at {root}.")
-    expected_methods = BASELINE_METHODS if comparison == "baselines" else CURRICULUM_METHODS
+    expected_methods = COMPARISONS[comparison]
     if set(methods) != set(expected_methods):
         raise ValueError(f"Expected completed runs for {', '.join(expected_methods)} at {root}.")
     expected = set(next(iter(methods.values())))

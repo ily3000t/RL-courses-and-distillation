@@ -8,7 +8,7 @@ import torch
 from rl_courses.catalog import make_catalog
 from rl_courses.opportunities import build_profiles
 from rl_courses.records import ROOT, read_json
-from rl_courses.sampling import BASELINE_METHODS
+from rl_courses.sampling import BACKOFF_METHOD, BASELINE_METHODS, PROGRESS_METHODS
 from rl_courses.training import train
 
 
@@ -54,7 +54,7 @@ class TrainingTest(unittest.TestCase):
             catalog = make_catalog(**config["scenarios"])
             build_profiles(catalog["train"], config["environment"], (12, 19, 26), output)
             profiles = read_json(output / "opportunities.json")
-            for method in ("density-progress", "opportunity-progress"):
+            for method in PROGRESS_METHODS:
                 with self.subTest(method=method):
                     run = output / method
                     run.mkdir()
@@ -65,3 +65,4 @@ class TrainingTest(unittest.TestCase):
                             (run / "curriculum_episodes.jsonl").read_text().splitlines()]
                     self.assertTrue(any(row["used_for_progress"] for row in rows))
                     self.assertTrue(any(not row["warmup"] for row in rows))
+                    self.assertEqual("density_progress" in rows[0], method == BACKOFF_METHOD)

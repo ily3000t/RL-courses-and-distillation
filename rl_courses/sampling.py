@@ -8,8 +8,14 @@ from .scenarios import DEMAND
 
 BASELINES = ("hard", "uniform", "fixed", "shuffled")
 BASELINE_METHODS = (*BASELINES, "plr")
-PROGRESS_METHODS = ("density-progress", "opportunity-progress")
-CURRICULUM_METHODS = ("plr", *PROGRESS_METHODS)
+BACKOFF_METHOD = "opportunity-progress-backoff"
+OPPORTUNITY_METHODS = ("opportunity-progress", BACKOFF_METHOD)
+PROGRESS_METHODS = ("density-progress", *OPPORTUNITY_METHODS)
+COMPARISONS = {
+    "baselines": BASELINE_METHODS,
+    "curriculum": ("plr", "density-progress", "opportunity-progress"),
+    "backoff": OPPORTUNITY_METHODS,
+}
 METHODS = (*BASELINE_METHODS, *PROGRESS_METHODS)
 
 
