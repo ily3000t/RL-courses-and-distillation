@@ -19,6 +19,7 @@ COMPARISONS = {
     "baselines": BASELINE_METHODS,
     "curriculum": ("plr", "density-progress", "opportunity-progress"),
     "backoff": OPPORTUNITY_METHODS,
+    "merge-curriculum": ("plr", *MERGE_METHODS),
 }
 METHODS = (*BASELINE_METHODS, *PROGRESS_METHODS, *MERGE_METHODS)
 

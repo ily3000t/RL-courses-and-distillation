@@ -6,10 +6,11 @@ from statistics import mean, stdev
 
 from .evaluation import summarize
 from .records import read_json
-from .sampling import COMPARISONS, OPPORTUNITY_METHODS
+from .sampling import COMPARISONS, PROFILE_METHODS
 
 
-METRICS = ("success_rate", "collision_rate", "timeout_rate", "pre_merge_timeout_rate", "missed_merge_rate")
+METRICS = ("success_rate", "collision_rate", "timeout_rate", "pre_merge_timeout_rate",
+           "missed_merge_rate", "pre_merge_failure_rate")
 
 
 def _completed(path):
@@ -36,7 +37,7 @@ def summarize_suite(root, split, success, collision, comparison="baselines"):
         config = metadata["config"].copy()
         method = config.pop("method")
         seed = metadata["seed"]
-        if method in OPPORTUNITY_METHODS:
+        if method in PROFILE_METHODS:
             current_profile_sha = metadata["opportunity_profiles"]["sha256"]
             if profile_sha is not None and current_profile_sha != profile_sha:
                 raise ValueError(f"Opportunity profile bundle differs across runs: {run}")

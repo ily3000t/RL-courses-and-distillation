@@ -142,3 +142,52 @@ progress with density progress using local weight `k/w`. With fewer than
 two subgroup episodes, the parent provides the full score. Once the
 subgroup has two full windows, its score is entirely local. The curriculum
 log records parent progress, subgroup counts, local scores, and weights.
+
+## Compare the reference-based merge curriculum
+
+| Method | Within-density priority |
+| --- | --- |
+| `merge-reference-failure` | Reference evidence times recent pre-merge failure estimate |
+| `merge-failure` | Recent pre-merge failure estimate |
+| `merge-reference` | Reference evidence |
+| `plr` | The existing SAC TD-error and staleness baseline |
+
+Reference evidence is one if any fixed-speed probe on the same training
+scene completed a SUMO-accepted merge and the probe episode had no
+collision. An accepted merge followed by a timeout counts as evidence for
+the merge itself. A scene without reference evidence remains eligible for
+uniform sampling. Probes never enter the SAC replay buffer.
+
+Pre-merge failures include timeouts before merging and missed merges.
+Every completed episode contributes a binary observation to this rate.
+Schedule cutoffs are excluded. With \(f\) failures in the last \(n\) valid
+episodes on the scene, the smoothed estimate is `(f + 1) / (n + 2)`.
+`configs/stage1.json` uses windows of at most eight episodes and 10,000
+uniform warm-up decision steps. Each of the three merge methods samples
+traffic density uniformly with a separate seed stream. Within the chosen
+density, the sampler uses 20% uniform sampling after warmup and otherwise
+samples by priority. If every priority is zero, it samples uniformly.
+The density stream matches across the three methods by episode index.
+Actual decision counts per density depend on episode length and are
+recorded separately.
+
+From the repository root, run the comparison on the existing development
+stress catalog with seed `20261120`:
+
+```powershell
+.\scripts\run_stage1.ps1 -Comparison merge-curriculum -Profiles runs/stage1-opportunities-v1/opportunities.json -Split stress -StressSeed 20261120 -Output runs/stage1-merge-curriculum-dev-v1
+```
+
+This runs seeds 42–46 for 120,000 decision steps each. Checkpoints are
+selected on the Hard validation set and evaluated on the specified
+pressure catalog. For the final comparison, freeze a new stress seed and
+scenario count before viewing its results. The runner accepts
+`-StressCount` with `-StressSeed` to set that count. Report full-episode
+success, collision, and combined pre-merge failure rates. The two
+reference methods must use the same profile bundle, and its collection
+cost is recorded separately from SAC interactions.
+
+`merge_reference_evidence.json` records the scene labels. Each row in
+`merge_curriculum_episodes.jsonl` records the conditional sampling
+probability and the statistics available when the scene was selected,
+followed by the observed outcome and its eligibility for rate updates.

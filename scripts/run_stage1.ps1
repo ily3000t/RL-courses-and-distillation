@@ -3,10 +3,11 @@ param(
     [string]$Config = 'configs/stage1.json',
     [string]$Python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe',
     [int[]]$Seeds = @(42, 43, 44, 45, 46),
-    [ValidateSet('baselines', 'curriculum', 'backoff')][string]$Comparison = 'baselines',
+    [ValidateSet('baselines', 'curriculum', 'backoff', 'merge-curriculum')][string]$Comparison = 'baselines',
     [string]$Profiles = '',
     [ValidateSet('validation', 'test', 'stress')][string]$Split = 'validation',
     [Nullable[int]]$StressSeed,
+    [ValidateRange(1, [int]::MaxValue)][Nullable[int]]$StressCount,
     [string]$Device = '',
     [double]$SuccessThreshold = 0.90,
     [double]$CollisionThreshold = 0.05
@@ -29,6 +30,7 @@ $methods = @{
     baselines = @('hard', 'uniform', 'fixed', 'shuffled', 'plr')
     curriculum = @('plr', 'density-progress', 'opportunity-progress')
     backoff = @('opportunity-progress', 'opportunity-progress-backoff')
+    'merge-curriculum' = @('plr', 'merge-failure', 'merge-reference', 'merge-reference-failure')
 }[$Comparison]
 $profileArgs = @()
 if ($Comparison -ne 'baselines') {
@@ -42,12 +44,17 @@ if ($PSBoundParameters.ContainsKey('StressSeed')) {
     if ($Split -ne 'stress') { throw 'Set -Split stress when supplying -StressSeed.' }
     $holdoutArgs = @('--stress-seed', $StressSeed)
 }
+if ($PSBoundParameters.ContainsKey('StressCount')) {
+    if (-not $PSBoundParameters.ContainsKey('StressSeed')) { throw 'Set -StressSeed when supplying -StressCount.' }
+    $holdoutArgs += @('--stress-count', $StressCount)
+}
 
 Push-Location -LiteralPath (Split-Path -Parent $PSScriptRoot)
 try {
     foreach ($method in $methods) {
         $methodArgs = @()
-        if ($method -in @('opportunity-progress', 'opportunity-progress-backoff')) {
+        if ($method -in @('opportunity-progress', 'opportunity-progress-backoff',
+                          'merge-reference', 'merge-reference-failure')) {
             $methodArgs = $profileArgs
         }
         foreach ($seed in $Seeds) {
