@@ -8,6 +8,14 @@ from .catalog import group_by_difficulty
 OUTCOMES = ("success", "collision", "timeout", "missed_merge")
 
 
+def is_pre_merge_timeout(episode):
+    return episode["outcome"] == "timeout" and not episode["merged"]
+
+
+def is_pre_merge_failure(episode):
+    return episode["outcome"] == "missed_merge" or is_pre_merge_timeout(episode)
+
+
 def evaluate(model, env, scenes):
     episodes = []
     for scene in scenes:
@@ -32,12 +40,12 @@ def evaluate(model, env, scenes):
 def summarize(episodes):
     counts = Counter(row["outcome"] for row in episodes)
     count = len(episodes)
+    pre_merge_timeouts = sum(map(is_pre_merge_timeout, episodes))
     return {
         "episodes": count,
         "mean_return": sum(row["return"] for row in episodes) / count,
-        "pre_merge_timeout_rate": sum(
-            row["outcome"] == "timeout" and not row["merged"] for row in episodes
-        ) / count,
+        "pre_merge_timeout_rate": pre_merge_timeouts / count,
+        "pre_merge_failure_rate": (pre_merge_timeouts + counts["missed_merge"]) / count,
         **{f"{outcome}_rate": counts[outcome] / count for outcome in OUTCOMES},
     }
 

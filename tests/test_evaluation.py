@@ -13,4 +13,5 @@ class EvaluationTest(unittest.TestCase):
         ])
         self.assertEqual(result["timeout_rate"], .5)
         self.assertEqual(result["pre_merge_timeout_rate"], .25)
+        self.assertEqual(result["pre_merge_failure_rate"], .5)
         self.assertEqual(result["missed_merge_rate"], .25)
