@@ -69,6 +69,9 @@ class TrainingTest(unittest.TestCase):
                     self.assertTrue(any(row["used_for_progress"] for row in rows))
                     self.assertTrue(any(not row["warmup"] for row in rows))
                     self.assertEqual("density_progress" in rows[0], method == BACKOFF_METHOD)
+            # Give the merge curricula enough time to complete an episode in every block.
+            config["budget"] = {"block_steps": config["environment"]["max_decisions"],
+                                "blocks_per_difficulty": 1}
             for method in MERGE_METHODS:
                 with self.subTest(method=method):
                     run = output / method
@@ -76,11 +79,11 @@ class TrainingTest(unittest.TestCase):
                     config["method"] = method
                     has_reference = method in REFERENCE_METHODS
                     train(config, catalog, 42, run, profiles if has_reference else None)
-                    self.assertEqual(read_json(run / "training_summary.json")["steps"], 252)
+                    self.assertEqual(read_json(run / "training_summary.json")["steps"], 480)
                     rows = [json.loads(line) for line in
                             (run / "merge_curriculum_episodes.jsonl").read_text().splitlines()]
                     self.assertTrue(any(not row["warmup"] for row in rows))
-                    self.assertTrue(any(row["pre_merge_failure"] for row in rows))
+                    self.assertTrue(any(row["pre_merge_failure"] is not None for row in rows))
                     self.assertEqual(any(row["used_for_failure_rate"] for row in rows),
                                      method != REFERENCE_ONLY_METHOD)
                     self.assertEqual((run / "merge_reference_evidence.json").is_file(), has_reference)
@@ -89,3 +92,8 @@ class TrainingTest(unittest.TestCase):
                         if row["outcome"] == "schedule_cut":
                             self.assertIsNone(row["pre_merge_failure"])
                             self.assertFalse(row["used_for_failure_rate"])
+                        else:
+                            failed = row["outcome"] == "missed_merge" or (
+                                row["outcome"] == "timeout" and not row["merged"]
+                            )
+                            self.assertEqual(row["pre_merge_failure"], failed)
