@@ -8,7 +8,10 @@ import torch
 from rl_courses.catalog import make_catalog
 from rl_courses.opportunities import build_profiles
 from rl_courses.records import ROOT, read_json
-from rl_courses.sampling import BACKOFF_METHOD, BASELINE_METHODS, PROGRESS_METHODS
+from rl_courses.sampling import (
+    BACKOFF_METHOD, BASELINE_METHODS, MERGE_METHODS, PROGRESS_METHODS,
+    REFERENCE_METHODS, REFERENCE_ONLY_METHOD,
+)
 from rl_courses.training import train
 
 
@@ -44,7 +47,7 @@ class TrainingTest(unittest.TestCase):
                     self.assertTrue(any(row["score"] is not None for row in rows))
                     self.assertTrue(any(row["selection"] == "replay" for row in rows))
 
-    def test_progress_methods_accept_feedback_from_real_rollouts(self):
+    def test_curriculum_methods_accept_feedback_from_real_rollouts(self):
         root = ROOT / "runs"
         root.mkdir(exist_ok=True)
         with TemporaryDirectory(dir=root) as folder:
@@ -66,3 +69,23 @@ class TrainingTest(unittest.TestCase):
                     self.assertTrue(any(row["used_for_progress"] for row in rows))
                     self.assertTrue(any(not row["warmup"] for row in rows))
                     self.assertEqual("density_progress" in rows[0], method == BACKOFF_METHOD)
+            for method in MERGE_METHODS:
+                with self.subTest(method=method):
+                    run = output / method
+                    run.mkdir()
+                    config["method"] = method
+                    has_reference = method in REFERENCE_METHODS
+                    train(config, catalog, 42, run, profiles if has_reference else None)
+                    self.assertEqual(read_json(run / "training_summary.json")["steps"], 252)
+                    rows = [json.loads(line) for line in
+                            (run / "merge_curriculum_episodes.jsonl").read_text().splitlines()]
+                    self.assertTrue(any(not row["warmup"] for row in rows))
+                    self.assertTrue(any(row["pre_merge_failure"] for row in rows))
+                    self.assertEqual(any(row["used_for_failure_rate"] for row in rows),
+                                     method != REFERENCE_ONLY_METHOD)
+                    self.assertEqual((run / "merge_reference_evidence.json").is_file(), has_reference)
+                    for row in rows:
+                        self.assertLess(row["start_step"], row["step"])
+                        if row["outcome"] == "schedule_cut":
+                            self.assertIsNone(row["pre_merge_failure"])
+                            self.assertFalse(row["used_for_failure_rate"])

@@ -15,7 +15,7 @@ from .evaluation import evaluate
 from .opportunities import DEFAULT_REFERENCE_SPEEDS, build_profiles, validate_speeds
 from .records import manifest, new_output, read_json, write_json
 from .reporting import summarize_suite
-from .sampling import COMPARISONS, METHODS, OPPORTUNITY_METHODS
+from .sampling import COMPARISONS, METHODS, PROFILE_METHODS
 from .scenarios import Scene
 from .training import train
 
@@ -29,10 +29,10 @@ def train_command(args):
         raise ValueError("Use a nonnegative signed 31-bit seed.")
     catalog = make_catalog(**config["scenarios"])
     profiles = None
-    if config["method"] in OPPORTUNITY_METHODS and args.profiles is None:
-        raise ValueError("Pass --profiles with the output of the profile command.")
-    if args.profiles is not None and config["method"] not in OPPORTUNITY_METHODS:
-        raise ValueError("--profiles requires an opportunity-progress method.")
+    if config["method"] in PROFILE_METHODS and args.profiles is None:
+        raise ValueError(f"{config['method']} requires --profiles from the profile command.")
+    if args.profiles is not None and config["method"] not in PROFILE_METHODS:
+        raise ValueError(f"{config['method']} does not use --profiles.")
     meta = manifest(config, args.seed, config["sac"]["device"], args.allow_dirty)
     if args.profiles is not None:
         profile_bytes = args.profiles.read_bytes()

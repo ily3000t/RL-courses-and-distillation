@@ -7,11 +7,15 @@ from stable_baselines3.common.callbacks import BaseCallback
 
 from .environment import EnvConfig, MergeEnv
 from .evaluation import evaluate, validation_key
+from .merge_curriculum import MergeCurriculumSampler, reference_evidence
 from .opportunities import opportunity_groups
 from .plr import PrioritizedSampler, sac_td_score
 from .progress import ProgressSampler
 from .records import append_json, write_json
-from .sampling import BACKOFF_METHOD, OPPORTUNITY_METHODS, BaselineSampler, PROGRESS_METHODS
+from .sampling import (
+    BACKOFF_METHOD, MERGE_METHODS, OPPORTUNITY_METHODS, PROGRESS_METHODS,
+    REFERENCE_METHODS, REFERENCE_ONLY_METHOD, BaselineSampler,
+)
 from .scenarios import DEMAND
 
 
@@ -60,7 +64,7 @@ class TrainingEnv(gym.Wrapper):
             if self.score_episode is not None:
                 self.score_episode(self.scene, self._transitions, self.decisions)
             if self.observe_episode is not None:
-                self.observe_episode(self.scene, info["outcome"], self.decisions)
+                self.observe_episode(self.scene, info, self.decisions)
         return observation, reward, terminated, truncated, info
 
 
@@ -93,7 +97,7 @@ def train(config, catalog, seed, output, profiles=None):
         raise ValueError("Use train_freq=1 for an exact decision budget at block boundaries.")
     method = config["method"]
     scenes = catalog["train"]
-    progress_groups = None
+    observe_episode = None
     if method == "plr":
         sampler = PrioritizedSampler(scenes, seed, **config["plr"])
     elif method in PROGRESS_METHODS:
@@ -105,25 +109,35 @@ def train(config, catalog, seed, output, profiles=None):
             progress_groups = {scene.scene_id: scene.difficulty for scene in scenes}
         sampler = ProgressSampler(scenes, progress_groups, seed, **config["progress"],
                                   density_backoff=method == BACKOFF_METHOD)
+        write_json(output / "curriculum_groups.json", progress_groups)
+        observe_episode = make_progress_recorder(sampler, output)
+    elif method in MERGE_METHODS:
+        reference = None
+        if method in REFERENCE_METHODS:
+            if profiles is None:
+                raise ValueError(f"{method} requires a training profile bundle.")
+            reference = reference_evidence(profiles, scenes, config["environment"])
+            write_json(output / "merge_reference_evidence.json", reference)
+        sampler = MergeCurriculumSampler(
+            scenes, seed, **config["merge_curriculum"], reference=reference,
+            use_failure=method != REFERENCE_ONLY_METHOD,
+        )
+        observe_episode = make_merge_recorder(sampler, output)
     else:
         sampler = BaselineSampler(method, scenes, seed, **budget)
     write_json(output / "schedule.json", {
         "method": config["method"], "block_steps": block_steps, "total_blocks": blocks,
         "block_order": sampler.block_order,
     })
-    if progress_groups is not None:
-        write_json(output / "curriculum_groups.json", progress_groups)
-
     environment = EnvConfig(**config["environment"])
     train_env = TrainingEnv(MergeEnv(output, environment), sampler.pick, block_steps, output)
+    train_env.observe_episode = observe_episode
     try:
         validation_env = MergeEnv(output, environment)
         try:
             model = SAC("MlpPolicy", train_env, seed=seed, **config["sac"])
             if method == "plr":
                 train_env.score_episode = make_plr_scorer(model, sampler, seed, output)
-            if progress_groups is not None:
-                train_env.observe_episode = make_progress_recorder(sampler, output)
             evaluation = CheckpointEvaluation(validation_env, catalog["validation"], block_steps, output)
             # One continuous learn() call keeps progress-based SAC settings comparable.
             callback = BlockCallback(evaluation)
@@ -154,12 +168,26 @@ def make_plr_scorer(model, sampler, seed, output):
 
 
 def make_progress_recorder(sampler, output):
-    def observe(scene, outcome, step):
+    def observe(scene, episode, step):
+        outcome = episode["outcome"]
         append_json(output / "curriculum_episodes.jsonl", {
             "step": step, "scene_id": scene.scene_id, "outcome": outcome,
             "used_for_progress": outcome != "schedule_cut", **sampler.selection,
         })
         sampler.observe(scene, outcome)
+    return observe
+
+
+def make_merge_recorder(sampler, output):
+    def observe(scene, episode, step):
+        failed = sampler.observe(scene, episode)
+        selection = sampler.selection
+        append_json(output / "merge_curriculum_episodes.jsonl", {
+            "step": step, "scene_id": scene.scene_id, "outcome": episode["outcome"],
+            "merged": episode["merged"], "pre_merge_failure": failed,
+            "used_for_failure_rate": failed is not None and selection["window_episodes"] is not None,
+            **selection,
+        })
     return observe
 
 

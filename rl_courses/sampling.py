@@ -11,12 +11,16 @@ BASELINE_METHODS = (*BASELINES, "plr")
 BACKOFF_METHOD = "opportunity-progress-backoff"
 OPPORTUNITY_METHODS = ("opportunity-progress", BACKOFF_METHOD)
 PROGRESS_METHODS = ("density-progress", *OPPORTUNITY_METHODS)
+REFERENCE_ONLY_METHOD = "merge-reference"
+REFERENCE_METHODS = (REFERENCE_ONLY_METHOD, "merge-reference-failure")
+MERGE_METHODS = ("merge-failure", *REFERENCE_METHODS)
+PROFILE_METHODS = (*OPPORTUNITY_METHODS, *REFERENCE_METHODS)
 COMPARISONS = {
     "baselines": BASELINE_METHODS,
     "curriculum": ("plr", "density-progress", "opportunity-progress"),
     "backoff": OPPORTUNITY_METHODS,
 }
-METHODS = (*BASELINE_METHODS, *PROGRESS_METHODS)
+METHODS = (*BASELINE_METHODS, *PROGRESS_METHODS, *MERGE_METHODS)
 
 
 class BaselineSampler:
