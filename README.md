@@ -191,3 +191,23 @@ cost is recorded separately from SAC interactions.
 `merge_curriculum_episodes.jsonl` records the conditional sampling
 probability and the statistics available when the scene was selected,
 followed by the observed outcome and its eligibility for rate updates.
+
+## Compare reference weighting with hard gating
+
+`merge-reference-weighted` uses the same recent failure estimate as
+`merge-failure`. It multiplies that estimate by two for scenes with
+positive reference evidence and by one for all other scenes. Every
+scene can enter priority sampling. The density stream, warmup, failure
+estimator, and uniform sampling fraction follow the original comparison.
+The episode log records the selected scene's `reference_weight`.
+
+```powershell
+.\scripts\run_stage1.ps1 -Comparison merge-weighting -Profiles runs/stage1-opportunities-v1/opportunities.json -Split stress -StressSeed 20261120 -Output runs/stage1-merge-weighting-dev-v1
+```
+
+This comparison uses the weighted method, hard gating
+(`merge-reference-failure`), failure-only sampling (`merge-failure`), and PLR.
+The original `merge-curriculum` comparison still uses its original four
+methods. Use the development set to compare success and pre-merge failure
+and the episode logs to compare coverage of Hard scenes without positive
+reference evidence. Reserve a new stress seed for the final comparison.

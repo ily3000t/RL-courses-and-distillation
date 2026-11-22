@@ -10,7 +10,7 @@ from rl_courses.opportunities import build_profiles
 from rl_courses.records import ROOT, read_json
 from rl_courses.sampling import (
     BACKOFF_METHOD, BASELINE_METHODS, MERGE_METHODS, PROGRESS_METHODS,
-    REFERENCE_METHODS, REFERENCE_ONLY_METHOD,
+    REFERENCE_METHODS, REFERENCE_ONLY_METHOD, WEIGHTED_REFERENCE_METHOD,
 )
 from rl_courses.training import train
 
@@ -89,6 +89,9 @@ class TrainingTest(unittest.TestCase):
                     self.assertEqual((run / "merge_reference_evidence.json").is_file(), has_reference)
                     for row in rows:
                         self.assertLess(row["start_step"], row["step"])
+                        if method == WEIGHTED_REFERENCE_METHOD:
+                            self.assertEqual(row["reference_weight"], 1 + row["reference_evidence"])
+                            self.assertGreater(row["priority"], 0)
                         if row["outcome"] == "schedule_cut":
                             self.assertIsNone(row["pre_merge_failure"])
                             self.assertFalse(row["used_for_failure_rate"])

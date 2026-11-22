@@ -14,7 +14,7 @@ from .progress import ProgressSampler
 from .records import append_json, write_json
 from .sampling import (
     BACKOFF_METHOD, MERGE_METHODS, OPPORTUNITY_METHODS, PROGRESS_METHODS,
-    REFERENCE_METHODS, REFERENCE_ONLY_METHOD, BaselineSampler,
+    REFERENCE_METHODS, REFERENCE_ONLY_METHOD, WEIGHTED_REFERENCE_METHOD, BaselineSampler,
 )
 from .scenarios import DEMAND
 
@@ -121,6 +121,7 @@ def train(config, catalog, seed, output, profiles=None):
         sampler = MergeCurriculumSampler(
             scenes, seed, **config["merge_curriculum"], reference=reference,
             use_failure=method != REFERENCE_ONLY_METHOD,
+            weighted_reference=method == WEIGHTED_REFERENCE_METHOD,
         )
         observe_episode = make_merge_recorder(sampler, output)
     else:

@@ -12,14 +12,17 @@ BACKOFF_METHOD = "opportunity-progress-backoff"
 OPPORTUNITY_METHODS = ("opportunity-progress", BACKOFF_METHOD)
 PROGRESS_METHODS = ("density-progress", *OPPORTUNITY_METHODS)
 REFERENCE_ONLY_METHOD = "merge-reference"
-REFERENCE_METHODS = (REFERENCE_ONLY_METHOD, "merge-reference-failure")
+HARD_REFERENCE_METHOD = "merge-reference-failure"
+WEIGHTED_REFERENCE_METHOD = "merge-reference-weighted"
+REFERENCE_METHODS = (REFERENCE_ONLY_METHOD, HARD_REFERENCE_METHOD, WEIGHTED_REFERENCE_METHOD)
 MERGE_METHODS = ("merge-failure", *REFERENCE_METHODS)
 PROFILE_METHODS = (*OPPORTUNITY_METHODS, *REFERENCE_METHODS)
 COMPARISONS = {
     "baselines": BASELINE_METHODS,
     "curriculum": ("plr", "density-progress", "opportunity-progress"),
     "backoff": OPPORTUNITY_METHODS,
-    "merge-curriculum": ("plr", *MERGE_METHODS),
+    "merge-curriculum": ("plr", "merge-failure", REFERENCE_ONLY_METHOD, HARD_REFERENCE_METHOD),
+    "merge-weighting": ("plr", "merge-failure", HARD_REFERENCE_METHOD, WEIGHTED_REFERENCE_METHOD),
 }
 METHODS = (*BASELINE_METHODS, *PROGRESS_METHODS, *MERGE_METHODS)
 

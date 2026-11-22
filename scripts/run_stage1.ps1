@@ -3,7 +3,8 @@ param(
     [string]$Config = 'configs/stage1.json',
     [string]$Python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe',
     [int[]]$Seeds = @(42, 43, 44, 45, 46),
-    [ValidateSet('baselines', 'curriculum', 'backoff', 'merge-curriculum')][string]$Comparison = 'baselines',
+    [ValidateSet('baselines', 'curriculum', 'backoff', 'merge-curriculum', 'merge-weighting')]
+    [string]$Comparison = 'baselines',
     [string]$Profiles = '',
     [ValidateSet('validation', 'test', 'stress')][string]$Split = 'validation',
     [Nullable[int]]$StressSeed,
@@ -31,6 +32,7 @@ $methods = @{
     curriculum = @('plr', 'density-progress', 'opportunity-progress')
     backoff = @('opportunity-progress', 'opportunity-progress-backoff')
     'merge-curriculum' = @('plr', 'merge-failure', 'merge-reference', 'merge-reference-failure')
+    'merge-weighting' = @('plr', 'merge-failure', 'merge-reference-failure', 'merge-reference-weighted')
 }[$Comparison]
 $profileArgs = @()
 if ($Comparison -ne 'baselines') {
@@ -54,7 +56,7 @@ try {
     foreach ($method in $methods) {
         $methodArgs = @()
         if ($method -in @('opportunity-progress', 'opportunity-progress-backoff',
-                          'merge-reference', 'merge-reference-failure')) {
+                          'merge-reference', 'merge-reference-failure', 'merge-reference-weighted')) {
             $methodArgs = $profileArgs
         }
         foreach ($seed in $Seeds) {
