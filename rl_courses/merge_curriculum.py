@@ -27,12 +27,14 @@ class MergeCurriculumSampler:
     block_order = None
 
     def __init__(self, scenes, seed, *, warmup_steps, window_episodes, exploration,
-                 reference=None, use_failure=True):
+                 reference=None, use_failure=True, weighted_reference=False):
         if (type(warmup_steps) is not int or warmup_steps < 0
                 or type(window_episodes) is not int or window_episodes < 1):
             raise ValueError("Use nonnegative integer warmup and a positive integer failure window.")
         if not 0 < exploration <= 1:
             raise ValueError("Exploration must be in (0, 1].")
+        if weighted_reference and (reference is None or not use_failure):
+            raise ValueError("Reference weighting requires reference evidence and failure feedback.")
         self.groups = group_by_difficulty(scenes)
         self.densities = tuple(sorted(self.groups))
         density_seed, *scene_seeds = np.random.SeedSequence(seed).spawn(1 + len(self.densities))
@@ -44,6 +46,7 @@ class MergeCurriculumSampler:
         self.warmup_steps = warmup_steps
         self.exploration = exploration
         self.reference = reference
+        self.weighted_reference = weighted_reference
         self.history = (
             {scene.scene_id: deque(maxlen=window_episodes) for scene in scenes} if use_failure else {}
         )
@@ -57,10 +60,12 @@ class MergeCurriculumSampler:
         failures = [sum(history) for history in histories]
         # A Beta(1, 1) prior gives unseen scenes a failure estimate of one half.
         estimates = (np.array(failures) + 1) / (np.array(counts) + 2)
-        eligible = [self.reference[scene_id] for scene_id in ids] if self.reference is not None else None
+        evidence = [self.reference[scene_id] for scene_id in ids] if self.reference is not None else None
+        weights = np.ones(len(scenes))
+        if evidence is not None:
+            weights = np.asarray(evidence, dtype=float) + int(self.weighted_reference)
         scores = estimates if self.history else np.ones(len(scenes))
-        if eligible is not None:
-            scores = scores * eligible
+        scores = scores * weights
         warmup = step < self.warmup_steps
         total = float(scores.sum())
         probabilities = np.full(len(scenes), 1 / len(scenes))
@@ -72,7 +77,8 @@ class MergeCurriculumSampler:
             "uniform_fallback": not warmup and total == 0,
             "density_probability": 1 / len(self.densities),
             "scene_probability_given_density": float(probabilities[index]),
-            "reference_evidence": eligible[index] if eligible is not None else None,
+            "reference_evidence": evidence[index] if evidence is not None else None,
+            "reference_weight": float(weights[index]),
             "window_episodes": counts[index] if self.history else None,
             "window_pre_merge_failures": failures[index] if self.history else None,
             "estimated_pre_merge_failure_rate": float(estimates[index]) if self.history else None,

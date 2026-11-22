@@ -35,12 +35,14 @@ class MergeCurriculumTest(unittest.TestCase):
             "failure": {"reference": None},
             "reference": {"reference": self.reference, "use_failure": False},
             "combined": {"reference": self.reference},
+            "weighted": {"reference": self.reference, "weighted_reference": True},
         }
         estimate = {"a": .75, "b": .25, "c": .75, "e": .5}
         for_mode = {
             "failure": {"a": .75, "b": .25, "c": .75, "e": .5},
             "reference": {"a": 1., "b": 1., "c": 0., "e": 0.},
             "combined": {"a": .75, "b": .25, "c": 0., "e": 0.},
+            "weighted": {"a": 1.5, "b": .5, "c": .75, "e": .5},
         }
         trajectories = {}
         for mode, options in condition.items():
@@ -68,8 +70,10 @@ class MergeCurriculumTest(unittest.TestCase):
                     self.assertEqual(row["density_probability"], .5)
                     if mode != "reference":
                         self.assertEqual(row["estimated_pre_merge_failure_rate"], estimate[scene.scene_id])
+                    if mode == "weighted":
+                        self.assertEqual(row["reference_weight"], 2 if self.reference[scene.scene_id] else 1)
                     if scene.difficulty == "easy":
-                        self.assertEqual(row["uniform_fallback"], step >= 10 and mode != "failure")
+                        self.assertEqual(row["uniform_fallback"], step >= 10 and mode in ("reference", "combined"))
                         self.assertEqual(row["scene_probability_given_density"], 1)
                     elif step < 10:
                         self.assertAlmostEqual(row["scene_probability_given_density"], 1/3)
@@ -81,3 +85,21 @@ class MergeCurriculumTest(unittest.TestCase):
                 trajectories[mode] = density_sequence
         self.assertEqual(trajectories["combined"], trajectories["failure"])
         self.assertEqual(trajectories["combined"], trajectories["reference"])
+        self.assertEqual(trajectories["combined"], trajectories["weighted"])
+
+    def test_weighting_with_no_positive_evidence_matches_failure_only(self):
+        options = {"warmup_steps": 0, "window_episodes": 2, "exploration": .2}
+        scenes = self.scenes[:3]
+        baseline = MergeCurriculumSampler(scenes, 42, **options)
+        weighted = MergeCurriculumSampler(
+            scenes, 42, **options, weighted_reference=True,
+            reference={scene.scene_id: False for scene in scenes},
+        )
+        failure = {"outcome": "timeout", "merged": False}
+        for sampler in (baseline, weighted):
+            sampler.observe(scenes[0], failure)
+        for step in range(30):
+            self.assertEqual(weighted.pick(step), baseline.pick(step))
+            self.assertEqual(weighted.selection["scene_probability_given_density"],
+                             baseline.selection["scene_probability_given_density"])
+            self.assertFalse(weighted.selection["uniform_fallback"])
