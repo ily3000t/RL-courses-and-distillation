@@ -1,4 +1,4 @@
-"""Command-line entry points for training and evaluating the stage-one policies."""
+"""Train, evaluate, and distill SAC policies for SUMO ramp merging."""
 
 import argparse
 from dataclasses import asdict
@@ -17,6 +17,7 @@ from .records import manifest, new_output, read_json, write_json
 from .reporting import summarize_suite
 from .sampling import COMPARISONS, METHODS, PROFILE_METHODS
 from .scenarios import Scene
+from .teacher_data import collect_trajectories
 from .training import train
 
 
@@ -147,6 +148,44 @@ def profile_command(args):
     print(output / "opportunities.json")
 
 
+def collect_teacher_command(args):
+    if args.steps_per_scene < 1 or not 0 <= args.seed < 2**31:
+        raise ValueError("Use positive steps per scene and a nonnegative signed 31-bit seed.")
+    if read_json(args.run / "status.json")["state"] != "completed":
+        raise ValueError("The teacher training run must be complete.")
+    training = read_json(args.run / "manifest.json")
+    catalog = read_json(args.run / "scenes.json")
+    scenes = [Scene(**row) for row in catalog["train"]]
+    checkpoint = (args.run / "best.zip").resolve(strict=True)
+    environment = training["config"]["environment"]
+    config = {"environment": environment, "steps_per_scene": args.steps_per_scene,
+              "rollout_policy": "stochastic_sac", "split": "train"}
+    meta = manifest(config, args.seed, args.device, args.allow_dirty)
+    if training["observation_fields"] != meta["observation_fields"]:
+        raise ValueError("Teacher observation fields differ from the current environment.")
+    meta["teacher"] = {
+        "checkpoint": str(checkpoint), "checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
+        "git_sha": training["git_sha"], "seed": training["seed"], "method": training["config"]["method"],
+        "training": read_json(args.run / "training_summary.json"),
+        "opportunity_profiles": training.get("opportunity_profiles"),
+    }
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    write_json(output / "scenes.json", catalog)
+
+    def collect():
+        model = SAC.load(checkpoint, device=args.device)
+        env = MergeEnv(output, EnvConfig(**environment))
+        try:
+            if model.observation_space != env.observation_space or model.action_space != env.action_space:
+                raise ValueError("Teacher spaces differ from the collection environment.")
+            collect_trajectories(model, env, scenes, args.seed, args.steps_per_scene, output)
+        finally:
+            env.close()
+
+    run_with_status(output, collect)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(required=True)
@@ -182,7 +221,13 @@ def main():
     profile_parser.add_argument("--config", type=Path, required=True)
     profile_parser.add_argument("--reference-speed", action="append", type=float)
     profile_parser.set_defaults(command=profile_command)
-    for command in (train_parser, eval_parser, report_parser, diagnose_parser, profile_parser):
+    collect_parser = commands.add_parser("collect-teacher")
+    collect_parser.add_argument("--run", type=Path, required=True)
+    collect_parser.add_argument("--seed", type=int, required=True)
+    collect_parser.add_argument("--steps-per-scene", type=int, default=64)
+    collect_parser.add_argument("--device", default="cpu")
+    collect_parser.set_defaults(command=collect_teacher_command)
+    for command in (train_parser, eval_parser, report_parser, diagnose_parser, profile_parser, collect_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()
