@@ -1,7 +1,12 @@
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
+import gymnasium as gym
 import torch
+from stable_baselines3 import SAC
 
+from rl_courses.actor_export import export_actor
 from rl_courses.distillation import gaussian_policy_loss, student_config
 from rl_courses.records import ROOT, read_json
 
@@ -25,3 +30,17 @@ class DistillationTest(unittest.TestCase):
             self.assertEqual(config["sac"]["policy_kwargs"]["net_arch"], [64, 64])
             self.assertEqual(config["environment"], base["environment"])
         self.assertEqual(base["sac"]["policy_kwargs"]["net_arch"], [128, 128])
+
+    def test_export_reloads_with_same_deterministic_actions(self):
+        root = ROOT / "runs"
+        root.mkdir(exist_ok=True)
+        env = gym.make("Pendulum-v1")
+        self.addCleanup(env.close)
+        model = SAC("MlpPolicy", env, policy_kwargs={"net_arch": [8, 8]}, device="cpu")
+        with TemporaryDirectory(dir=root) as folder:
+            output = Path(folder)
+            export_actor(model, output)
+            actor = torch.jit.load(str(output / "actor.pt"))
+            observation = torch.tensor([[1.0, 0.0, 0.25]])
+            torch.testing.assert_close(actor(observation), model.actor(observation, deterministic=True))
+            self.assertGreater(read_json(output / "deployment.json")["actor_parameters"], 0)

@@ -14,7 +14,7 @@ from .records import write_json
 
 def export_actor(model, output):
     actor = deepcopy(model.actor).cpu().eval()
-    deployment = nn.Sequential(actor.features_extractor, actor.latent_pi, actor.mu, nn.Tanh())
+    deployment = nn.Sequential(actor.features_extractor, actor.latent_pi, actor.mu, nn.Tanh()).eval()
     observation = torch.zeros((1, *model.observation_space.shape), dtype=torch.float32)
     threads = torch.get_num_threads()
     torch.set_num_threads(1)
