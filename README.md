@@ -211,3 +211,41 @@ The original `merge-curriculum` comparison still uses its original four
 methods. Use the development set to compare success and pre-merge failure
 and the episode logs to compare coverage of Hard scenes without positive
 reference evidence. Reserve a new stress seed for the final comparison.
+
+## Distill a SAC teacher
+
+Choose a completed teacher training run and its validation-selected
+`best.zip`. Start with PLR, then repeat with the weighted-reference teacher.
+The runner collects stochastic SAC rollouts from the training catalog only,
+using exactly 64 decisions per scene by default. It saves deterministic
+teacher actions and the pre-tanh diagonal Gaussian parameters for the same
+observations. Short episodes restart within their scene quota. Collection
+cuts and actual sampling cost are recorded separately from student training.
+
+```powershell
+.\scripts\run_stage2.ps1 -TeacherRun runs/stage1-merge-curriculum-dev-v1/plr/seed-42/train -Output runs/stage2-plr-validation-v1
+.\scripts\run_stage2.ps1 -TeacherRun runs/stage1-merge-weighted-only-dev-v1/merge-reference-weighted/seed-42/train -ReuseScratch runs/stage2-plr-validation-v1 -Output runs/stage2-weighted-validation-v1
+```
+
+Each student uses the same `[64, 64]` SAC actor architecture. `scratch`
+trains a small SAC policy with uniform scene sampling under the stage-one
+interaction budget. `bc` minimizes MSE against the teacher's deterministic
+action. `soft` minimizes teacher-to-student KL in pre-tanh Gaussian space.
+BC and soft share the same dataset, seed, initialization, optimizer settings
+and minibatch sequence. Neither uses a critic loss or online RL fine-tuning.
+The second run reuses the same scratch checkpoints and evaluates them under
+its recorded evaluation protocol. A single runner invocation holds the
+teacher fixed across the student training seeds.
+
+Use `-Split test` or `-Split stress -StressSeed <seed> -StressCount <count>`
+for a frozen comparison. Teachers and students use deterministic closed-loop
+evaluation and select checkpoints using Hard validation. The report contains
+per-seed BC-versus-soft metrics, student-versus-teacher success gaps and
+retention, and separate teacher training, collection and student budgets.
+Each evaluation exports and measures the deterministic CPU actor (FP32
+TorchScript, batch size one, one thread). Those latencies cover actor
+execution alone. The training archive is used for reproducing experiments.
+
+For an end-to-end check, use a teacher trained with `configs/smoke.json`
+and pass `-Config configs/smoke.json -StudentConfig configs/distillation-smoke.json
+-Seeds 42 -StepsPerScene 8 -Device cpu`.
