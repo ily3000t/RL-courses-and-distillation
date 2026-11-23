@@ -1,0 +1,6 @@
+{
+  "net_arch": [8, 8],
+  "updates": 4,
+  "batch_size": 8,
+  "validate_every": 2
+}

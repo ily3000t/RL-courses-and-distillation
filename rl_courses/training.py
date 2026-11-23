@@ -75,9 +75,11 @@ class CheckpointEvaluation:
         self.block_steps = block_steps
         self.output = output
         self.best_key = None
+        self.decision_steps = 0
 
     def checkpoint(self, model, step):
-        summary, _ = evaluate(model, self.validation_env, self.scenes)
+        summary, episodes = evaluate(model, self.validation_env, self.scenes)
+        self.decision_steps += sum(row["decisions"] for row in episodes)
         append_json(self.output / "validation.jsonl", {"step": step, "summary": summary})
         key = validation_key(summary)
         if self.best_key is None or key > self.best_key:
@@ -153,6 +155,7 @@ def train(config, catalog, seed, output, profiles=None):
             validation_env.close()
     finally:
         train_env.close()
+    return evaluation.decision_steps
 
 
 def make_plr_scorer(model, sampler, seed, output):

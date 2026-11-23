@@ -5,11 +5,13 @@ from dataclasses import asdict
 import hashlib
 import json
 from pathlib import Path
+from time import perf_counter
 
 from stable_baselines3 import SAC
 
 from .catalog import make_catalog, make_stress_holdout, serialize_catalog
 from .diagnostics import comparison_inputs, run_diagnostics
+from .distillation import STUDENT_METHODS, student_config, train_offline
 from .environment import EnvConfig, MergeEnv
 from .evaluation import evaluate
 from .opportunities import DEFAULT_REFERENCE_SPEEDS, build_profiles, validate_speeds
@@ -186,6 +188,55 @@ def collect_teacher_command(args):
     run_with_status(output, collect)
 
 
+def train_student_command(args):
+    if not 0 <= args.seed < 2**31:
+        raise ValueError("Use a nonnegative signed 31-bit seed.")
+    scratch = args.method == "scratch"
+    if scratch == (args.data is not None):
+        raise ValueError("BC and soft distillation require --data. The scratch student does not use it.")
+    config = student_config(read_json(args.config), read_json(args.student_config), args.method, args.device)
+    catalog = make_catalog(**config["scenarios"])
+    serialized = serialize_catalog(catalog)
+    meta = manifest(config, args.seed, config["sac"]["device"], args.allow_dirty)
+    if not scratch:
+        if read_json(args.data / "status.json")["state"] != "completed":
+            raise ValueError("The teacher collection must be complete.")
+        collection = read_json(args.data / "manifest.json")
+        summary = read_json(args.data / "collection_summary.json")
+        steps = collection["config"]["steps_per_scene"]
+        dataset = (args.data / "trajectories.npz").resolve(strict=True)
+        dataset_hash = hashlib.sha256(dataset.read_bytes()).hexdigest()
+        if (collection["config"]["split"] != "train" or steps < 1
+                or collection["config"]["environment"] != config["environment"]
+                or collection["observation_fields"] != meta["observation_fields"]
+                or read_json(args.data / "scenes.json") != serialized
+                or summary["decision_steps"] != steps * len(catalog["train"])
+                or dataset_hash != summary["dataset_sha256"]):
+            raise ValueError("Teacher data do not match the student environment, catalog or collection manifest.")
+        meta["teacher_data"] = {
+            "collection": str(args.data.resolve()), "dataset_sha256": dataset_hash,
+            "collection_git_sha": collection["git_sha"], "collection_seed": collection["seed"],
+            "teacher": collection["teacher"],
+        }
+    else:
+        meta["scratch_scene_sampling"] = "uniform"
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    write_json(output / "scenes.json", serialized)
+
+    def fit():
+        if not scratch:
+            train_offline(config, catalog, args.seed, output, dataset, steps)
+            return
+        start = perf_counter()
+        validation_steps = train({**config, "method": "uniform"}, catalog, args.seed, output)
+        summary = read_json(output / "training_summary.json")
+        summary.update(wall_seconds=perf_counter() - start, validation_decision_steps=validation_steps)
+        write_json(output / "training_summary.json", summary)
+
+    run_with_status(output, fit)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(required=True)
@@ -227,7 +278,16 @@ def main():
     collect_parser.add_argument("--steps-per-scene", type=int, default=64)
     collect_parser.add_argument("--device", default="cpu")
     collect_parser.set_defaults(command=collect_teacher_command)
-    for command in (train_parser, eval_parser, report_parser, diagnose_parser, profile_parser, collect_parser):
+    student_parser = commands.add_parser("train-student")
+    student_parser.add_argument("--config", type=Path, required=True)
+    student_parser.add_argument("--student-config", type=Path, required=True)
+    student_parser.add_argument("--method", choices=STUDENT_METHODS, required=True)
+    student_parser.add_argument("--data", type=Path)
+    student_parser.add_argument("--seed", type=int, required=True)
+    student_parser.add_argument("--device")
+    student_parser.set_defaults(command=train_student_command)
+    for command in (train_parser, eval_parser, report_parser, diagnose_parser, profile_parser,
+                    collect_parser, student_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()
