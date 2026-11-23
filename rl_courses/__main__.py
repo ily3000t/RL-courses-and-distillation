@@ -9,9 +9,11 @@ from time import perf_counter
 
 from stable_baselines3 import SAC
 
+from .actor_export import export_actor
 from .catalog import make_catalog, make_stress_holdout, serialize_catalog
 from .diagnostics import comparison_inputs, run_diagnostics
 from .distillation import STUDENT_METHODS, student_config, train_offline
+from .distillation_report import summarize_distillation
 from .environment import EnvConfig, MergeEnv
 from .evaluation import evaluate
 from .opportunities import DEFAULT_REFERENCE_SPEEDS, build_profiles, validate_speeds
@@ -89,6 +91,8 @@ def evaluate_command(args):
             print(summary)
         finally:
             env.close()
+        if args.benchmark_actor:
+            export_actor(model, output)
 
     run_with_status(output, predict)
 
@@ -237,6 +241,16 @@ def train_student_command(args):
     run_with_status(output, fit)
 
 
+def distillation_report_command(args):
+    result = summarize_distillation(args.suite, args.split)
+    meta = manifest({"suite": str(args.suite.resolve()), "split": args.split},
+                    result["student_seeds"], "cpu", args.allow_dirty)
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    write_json(output / "report.json", result)
+    print(output / "report.json")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(required=True)
@@ -254,6 +268,7 @@ def main():
     eval_parser.add_argument("--stress-seed", type=int)
     eval_parser.add_argument("--stress-count", type=int)
     eval_parser.add_argument("--device", default="cpu")
+    eval_parser.add_argument("--benchmark-actor", action="store_true")
     eval_parser.set_defaults(command=evaluate_command)
     report_parser = commands.add_parser("report")
     report_parser.add_argument("--suite", type=Path, required=True)
@@ -286,8 +301,12 @@ def main():
     student_parser.add_argument("--seed", type=int, required=True)
     student_parser.add_argument("--device")
     student_parser.set_defaults(command=train_student_command)
+    distillation_parser = commands.add_parser("report-distillation")
+    distillation_parser.add_argument("--suite", type=Path, required=True)
+    distillation_parser.add_argument("--split", choices=("validation", "test", "stress"), default="validation")
+    distillation_parser.set_defaults(command=distillation_report_command)
     for command in (train_parser, eval_parser, report_parser, diagnose_parser, profile_parser,
-                    collect_parser, student_parser):
+                    collect_parser, student_parser, distillation_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()
