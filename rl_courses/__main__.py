@@ -14,9 +14,10 @@ from .catalog import make_catalog, make_stress_holdout, serialize_catalog
 from .diagnostics import comparison_inputs, run_diagnostics
 from .distillation import STUDENT_METHODS, student_config, train_offline
 from .distillation_report import summarize_collection_ablation, summarize_distillation
-from .environment import EnvConfig, MergeEnv
+from .environment import OBSERVATION_FIELDS, EnvConfig, MergeEnv
 from .evaluation import evaluate
 from .opportunities import DEFAULT_REFERENCE_SPEEDS, build_profiles, validate_speeds
+from .phase_sampling import WINDOW_METERS, sample_merge_phases
 from .records import manifest, new_output, read_json, write_json
 from .reporting import summarize_suite
 from .sampling import COMPARISONS, METHODS, PROFILE_METHODS
@@ -195,6 +196,28 @@ def collect_teacher_command(args):
     run_with_status(output, collect)
 
 
+def sample_teacher_command(args):
+    source = args.collection.resolve()
+    if read_json(source / "status.json")["state"] != "completed":
+        raise ValueError("The uniform source collection must be complete.")
+    collection = read_json(source / "manifest.json")
+    config = collection["config"]
+    if (config["collection_mode"] != "full-episode" or config.get("sampling_mode", "uniform") != "uniform"
+            or config["split"] != "train" or collection["observation_fields"] != list(OBSERVATION_FIELDS)):
+        raise ValueError("Sampling requires a uniform, full-episode training collection with matching observation fields.")
+    quota, seed = config["steps_per_scene"], collection["seed"]
+    catalog = read_json(source / "scenes.json")
+    settings = {**config, "sampling_mode": "merge-phase", "priority_window_m": WINDOW_METERS,
+                "minimum_per_priority_phase": quota // 4}
+    meta = manifest(settings, seed, "cpu", args.allow_dirty)
+    meta["teacher"] = collection["teacher"]
+    meta["source_collection"] = {"path": str(source), "git_sha": collection["git_sha"]}
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    write_json(output / "scenes.json", catalog)
+    run_with_status(output, lambda: sample_merge_phases(source, output, catalog, seed, quota))
+
+
 def train_student_command(args):
     if not 0 <= args.seed < 2**31:
         raise ValueError("Use a nonnegative signed 31-bit seed.")
@@ -312,6 +335,9 @@ def main():
     collect_parser.add_argument("--save-rollout-pool", action="store_true")
     collect_parser.add_argument("--device", default="cpu")
     collect_parser.set_defaults(command=collect_teacher_command)
+    sample_parser = commands.add_parser("sample-teacher")
+    sample_parser.add_argument("--collection", type=Path, required=True)
+    sample_parser.set_defaults(command=sample_teacher_command)
     student_parser = commands.add_parser("train-student")
     student_parser.add_argument("--config", type=Path, required=True)
     student_parser.add_argument("--student-config", type=Path, required=True)
@@ -331,7 +357,7 @@ def main():
     ablation_parser.add_argument("--bootstrap-seed", type=int, default=104731)
     ablation_parser.set_defaults(command=collection_ablation_report_command)
     for command in (train_parser, eval_parser, report_parser, diagnose_parser, profile_parser,
-                    collect_parser, student_parser, distillation_parser, ablation_parser):
+                    collect_parser, sample_parser, student_parser, distillation_parser, ablation_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()
