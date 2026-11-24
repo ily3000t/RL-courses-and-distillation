@@ -21,7 +21,7 @@ from .records import manifest, new_output, read_json, write_json
 from .reporting import summarize_suite
 from .sampling import COMPARISONS, METHODS, PROFILE_METHODS
 from .scenarios import Scene
-from .teacher_data import collect_trajectories
+from .teacher_data import COLLECTION_MODES, collect_trajectories
 from .training import train
 
 
@@ -165,7 +165,7 @@ def collect_teacher_command(args):
     checkpoint = (args.run / "best.zip").resolve(strict=True)
     environment = training["config"]["environment"]
     config = {"environment": environment, "steps_per_scene": args.steps_per_scene,
-              "rollout_policy": "stochastic_sac", "split": "train"}
+              "rollout_policy": "stochastic_sac", "split": "train", "collection_mode": args.collection_mode}
     meta = manifest(config, args.seed, args.device, args.allow_dirty)
     if training["observation_fields"] != meta["observation_fields"]:
         raise ValueError("Teacher observation fields differ from the current environment.")
@@ -185,7 +185,8 @@ def collect_teacher_command(args):
         try:
             if model.observation_space != env.observation_space or model.action_space != env.action_space:
                 raise ValueError("Teacher spaces differ from the collection environment.")
-            collect_trajectories(model, env, scenes, args.seed, args.steps_per_scene, output)
+            collect_trajectories(model, env, scenes, args.seed, args.steps_per_scene, output,
+                                 args.collection_mode)
         finally:
             env.close()
 
@@ -291,6 +292,7 @@ def main():
     collect_parser.add_argument("--run", type=Path, required=True)
     collect_parser.add_argument("--seed", type=int, required=True)
     collect_parser.add_argument("--steps-per-scene", type=int, default=64)
+    collect_parser.add_argument("--collection-mode", choices=COLLECTION_MODES, default="truncate")
     collect_parser.add_argument("--device", default="cpu")
     collect_parser.set_defaults(command=collect_teacher_command)
     student_parser = commands.add_parser("train-student")
