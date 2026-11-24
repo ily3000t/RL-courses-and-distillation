@@ -354,3 +354,31 @@ and optimizer budget. The number of rows per scene and phase stays fixed.
 The summary records additional student rollout decisions and teacher
 queries. In the output dataset, `student_rollout_indices` points to
 `student_rollouts.npz` for substituted rows and is `-1` for original rows.
+
+### Replay short corrections from the same student state
+
+Run the fixed BC student on the Hard training catalog. At its first decision
+within 50 metres of the merge entrance and its first unmerged decision on
+the merge lane, replay the recorded action prefix. Each replay checks that
+the anchor matches the original observation and active traffic state.
+Branches use the student, replace only acceleration, replace only the
+merge request, or replace both with teacher outputs. A replacement lasts
+up to four decision steps or until the vehicle merges. The fixed student
+continues to the original episode end in all four branches.
+
+```powershell
+$python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe'
+$teacher = 'runs/stage1-merge-weighted-only-dev-v1/merge-reference-weighted/seed-42/train'
+$student = 'runs/stage2-weighted-collection-ablation-v1/full-episode/bc/seed-42/train'
+& $python -B -m rl_courses replay-corrections --teacher-run $teacher --student-run $student `
+    --intervention-steps 4 --output runs/stage2-weighted-merge-correction-replay-v1
+if ($LASTEXITCODE -ne 0) { throw 'Correction replay failed.' }
+```
+
+Use repeated `--scene` flags for a small subset. The summary counts rescues
+from missed merges and pre-merge timeouts, regressions from successes,
+and the separate simulation and teacher-query costs. For a rescued anchor,
+the diagnostics prefer a single changed component. When both single
+changes succeed, the faster merge is selected, with acceleration breaking
+an exact tie. The JSONL records retain the original prefix, the matched
+traffic snapshot, and actions during the intervention.

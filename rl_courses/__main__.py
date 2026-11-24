@@ -11,6 +11,7 @@ from stable_baselines3 import SAC
 
 from .actor_export import export_actor
 from .catalog import make_catalog, make_stress_holdout, serialize_catalog
+from .correction_replay import BRANCHES, run_correction_replay
 from .diagnostics import comparison_inputs, run_diagnostics
 from .distillation import STUDENT_METHODS, student_config, train_offline
 from .distillation_report import summarize_collection_ablation, summarize_distillation
@@ -138,6 +139,35 @@ def diagnose_command(args):
     write_json(output / "manifest.json", meta)
     run_with_status(output, lambda: run_diagnostics(inputs, scenes, speeds, output))
     print(output / "episodes.json")
+
+
+def replay_corrections_command(args):
+    runs = (args.teacher_run, args.student_run)
+    for run in runs:
+        if read_json(run / "status.json")["state"] != "completed":
+            raise ValueError(f"Use a completed policy run: {run}")
+        if read_json(run / "manifest.json")["observation_fields"] != list(OBSERVATION_FIELDS):
+            raise ValueError(f"Observation fields differ from the current SUMO environment: {run}")
+    inputs, selected = comparison_inputs(runs, "train", args.scene)
+    scenes = [scene for scene in selected if scene.difficulty == "hard"]
+    if not scenes or (args.scene and len(scenes) != len(selected)):
+        raise ValueError("Correction replay uses Hard training scenes only.")
+    if not 1 <= args.intervention_steps <= inputs[0]["environment"]["max_decisions"]:
+        raise ValueError("Intervention steps must be positive and fit the original episode horizon.")
+    config = {
+        "split": "train", "evaluation_catalog": [asdict(scene) for scene in scenes],
+        "environment": inputs[0]["environment"], "approach_window_m": WINDOW_METERS,
+        "intervention_steps": args.intervention_steps, "stop_on_merge": True,
+        "continuation_policy": "student", "policy_actions": "deterministic_sac",
+        "branch_teacher_channels": BRANCHES,
+        **{name: {key: item for key, item in row.items() if key not in ("scenes", "environment")}
+           for name, row in zip(("teacher", "student"), inputs, strict=True)},
+    }
+    meta = manifest(config, [row["seed"] for row in inputs], "cpu", args.allow_dirty)
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    run_with_status(output, lambda: run_correction_replay(inputs, scenes, args.intervention_steps, output))
+    print(output / "summary.json")
 
 
 def profile_command(args):
@@ -382,6 +412,12 @@ def main():
     diagnose_parser.add_argument("--scene", action="append")
     diagnose_parser.add_argument("--reference-speed", action="append", type=float)
     diagnose_parser.set_defaults(command=diagnose_command)
+    correction_parser = commands.add_parser("replay-corrections")
+    correction_parser.add_argument("--teacher-run", type=Path, required=True)
+    correction_parser.add_argument("--student-run", type=Path, required=True)
+    correction_parser.add_argument("--scene", action="append")
+    correction_parser.add_argument("--intervention-steps", type=int, default=4)
+    correction_parser.set_defaults(command=replay_corrections_command)
     profile_parser = commands.add_parser("profile")
     profile_parser.add_argument("--config", type=Path, required=True)
     profile_parser.add_argument("--reference-speed", action="append", type=float)
@@ -420,7 +456,7 @@ def main():
     ablation_parser.add_argument("--split", choices=("validation", "test", "stress"), default="stress")
     ablation_parser.add_argument("--bootstrap-seed", type=int, default=104731)
     ablation_parser.set_defaults(command=collection_ablation_report_command)
-    for command in (train_parser, eval_parser, report_parser, diagnose_parser, profile_parser,
+    for command in (train_parser, eval_parser, report_parser, diagnose_parser, correction_parser, profile_parser,
                     collect_parser, sample_parser, relabel_parser, student_parser, distillation_parser, ablation_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")

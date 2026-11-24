@@ -138,6 +138,26 @@ class MergeEnv(gym.Env):
             ),
         }
 
+    def replay_state(self):
+        """Read active traffic and the environment clock at a decision boundary."""
+        if self._connection is None or self._episode_done:
+            raise RuntimeError("Replay state is available during an active episode.")
+        vehicles = self._connection.vehicle
+        return {
+            "time_s": self._connection.simulation.getTime(),
+            "decision": self._decisions,
+            "merged": self._merged,
+            "vehicles": {
+                name: {
+                    "lane": vehicles.getLaneID(name),
+                    "position": list(vehicles.getPosition(name)),
+                    "speed": vehicles.getSpeed(name),
+                    "acceleration": vehicles.getAcceleration(name),
+                }
+                for name in sorted(vehicles.getIDList())
+            },
+        }
+
     def _observation(self):
         vehicles = self._connection.vehicle
         x, _ = vehicles.getPosition(EGO)
