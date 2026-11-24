@@ -22,6 +22,7 @@ from .records import manifest, new_output, read_json, write_json
 from .reporting import summarize_suite
 from .sampling import COMPARISONS, METHODS, PROFILE_METHODS
 from .scenarios import Scene
+from .student_relabeling import relabel_student_rollouts
 from .teacher_data import COLLECTION_MODES, collect_trajectories
 from .training import train
 
@@ -218,6 +219,64 @@ def sample_teacher_command(args):
     run_with_status(output, lambda: sample_merge_phases(source, output, catalog, seed, quota))
 
 
+def relabel_student_command(args):
+    source, behavior = args.collection.resolve(), args.student_run.resolve()
+    for path in (source, behavior):
+        if read_json(path / "status.json")["state"] != "completed":
+            raise ValueError(f"Use a completed source run: {path}")
+    collection = read_json(source / "manifest.json")
+    pilot = read_json(behavior / "manifest.json")
+    config = collection["config"]
+    catalog = read_json(source / "scenes.json")
+    quota = config["steps_per_scene"]
+    summary = read_json(source / "collection_summary.json")
+    dataset = source / "trajectories.npz"
+    teacher_data = pilot.get("teacher_data", {})
+    if (config.get("collection_mode") != "full-episode" or config.get("sampling_mode", "uniform") != "uniform"
+            or config["split"] != "train" or quota < 4 or config["environment"] != pilot["config"]["environment"]
+            or collection["observation_fields"] != list(OBSERVATION_FIELDS)
+            or collection["observation_fields"] != pilot["observation_fields"]
+            or catalog != read_json(behavior / "scenes.json")
+            or summary["decision_steps"] != quota * len(catalog["train"])
+            or teacher_data.get("teacher") != collection["teacher"]
+            or teacher_data.get("dataset_sha256") != summary["dataset_sha256"]
+            or hashlib.sha256(dataset.read_bytes()).hexdigest() != summary["dataset_sha256"]):
+        raise ValueError("Use a student trained on the same uniform full-episode data and matching environment.")
+    teacher_checkpoint = Path(collection["teacher"]["checkpoint"])
+    if hashlib.sha256(teacher_checkpoint.read_bytes()).hexdigest() != collection["teacher"]["checkpoint_sha256"]:
+        raise ValueError("The original teacher checkpoint has changed.")
+    student_checkpoint = behavior / "best.zip"
+    seed = collection["seed"]
+    settings = {**config, "sampling_mode": "student-relabeling", "priority_window_m": WINDOW_METERS,
+                "maximum_replacements_per_priority_phase": quota // 4,
+                "student_rollouts_per_scene": 1, "student_rollout_policy": "deterministic"}
+    meta = manifest(settings, seed, args.device, args.allow_dirty)
+    meta["teacher"] = collection["teacher"]
+    meta["source_collection"] = {"path": str(source), "git_sha": collection["git_sha"]}
+    meta["behavior_student"] = {
+        "checkpoint": str(student_checkpoint), "checkpoint_sha256": hashlib.sha256(student_checkpoint.read_bytes()).hexdigest(),
+        "git_sha": pilot["git_sha"], "seed": pilot["seed"], "method": pilot["config"]["method"],
+    }
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    write_json(output / "scenes.json", catalog)
+
+    def relabel():
+        teacher = SAC.load(teacher_checkpoint, device=args.device)
+        student = SAC.load(student_checkpoint, device=args.device)
+        env = MergeEnv(output, EnvConfig(**config["environment"]))
+        try:
+            for model in (teacher, student):
+                if model.observation_space != env.observation_space or model.action_space != env.action_space:
+                    raise ValueError("Policy spaces do not match the relabeling environment.")
+            scenes = [Scene(**row) for row in catalog["train"]]
+            relabel_student_rollouts(teacher, student, env, scenes, seed, quota, dataset, summary, output)
+        finally:
+            env.close()
+
+    run_with_status(output, relabel)
+
+
 def train_student_command(args):
     if not 0 <= args.seed < 2**31:
         raise ValueError("Use a nonnegative signed 31-bit seed.")
@@ -338,6 +397,11 @@ def main():
     sample_parser = commands.add_parser("sample-teacher")
     sample_parser.add_argument("--collection", type=Path, required=True)
     sample_parser.set_defaults(command=sample_teacher_command)
+    relabel_parser = commands.add_parser("relabel-student")
+    relabel_parser.add_argument("--collection", type=Path, required=True)
+    relabel_parser.add_argument("--student-run", type=Path, required=True)
+    relabel_parser.add_argument("--device", default="cpu")
+    relabel_parser.set_defaults(command=relabel_student_command)
     student_parser = commands.add_parser("train-student")
     student_parser.add_argument("--config", type=Path, required=True)
     student_parser.add_argument("--student-config", type=Path, required=True)
@@ -357,7 +421,7 @@ def main():
     ablation_parser.add_argument("--bootstrap-seed", type=int, default=104731)
     ablation_parser.set_defaults(command=collection_ablation_report_command)
     for command in (train_parser, eval_parser, report_parser, diagnose_parser, profile_parser,
-                    collect_parser, sample_parser, student_parser, distillation_parser, ablation_parser):
+                    collect_parser, sample_parser, relabel_parser, student_parser, distillation_parser, ablation_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()
