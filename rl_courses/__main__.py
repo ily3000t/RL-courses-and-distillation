@@ -157,6 +157,8 @@ def profile_command(args):
 def collect_teacher_command(args):
     if args.steps_per_scene < 1 or not 0 <= args.seed < 2**31:
         raise ValueError("Use positive steps per scene and a nonnegative signed 31-bit seed.")
+    if args.save_rollout_pool and args.collection_mode != "full-episode":
+        raise ValueError("--save-rollout-pool requires --collection-mode full-episode.")
     if read_json(args.run / "status.json")["state"] != "completed":
         raise ValueError("The teacher training run must be complete.")
     training = read_json(args.run / "manifest.json")
@@ -186,7 +188,7 @@ def collect_teacher_command(args):
             if model.observation_space != env.observation_space or model.action_space != env.action_space:
                 raise ValueError("Teacher spaces differ from the collection environment.")
             collect_trajectories(model, env, scenes, args.seed, args.steps_per_scene, output,
-                                 args.collection_mode)
+                                 args.collection_mode, save_rollout_pool=args.save_rollout_pool)
         finally:
             env.close()
 
@@ -307,6 +309,7 @@ def main():
     collect_parser.add_argument("--seed", type=int, required=True)
     collect_parser.add_argument("--steps-per-scene", type=int, default=64)
     collect_parser.add_argument("--collection-mode", choices=COLLECTION_MODES, default="truncate")
+    collect_parser.add_argument("--save-rollout-pool", action="store_true")
     collect_parser.add_argument("--device", default="cpu")
     collect_parser.set_defaults(command=collect_teacher_command)
     student_parser = commands.add_parser("train-student")

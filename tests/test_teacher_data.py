@@ -79,7 +79,7 @@ class TeacherDataTest(unittest.TestCase):
             truncated, full, repeated = (Path(folder) / name for name in ("truncate", "full", "repeated"))
             for path, mode in ((truncated, "truncate"), (full, "full-episode"), (repeated, "full-episode")):
                 path.mkdir()
-                collect_trajectories(teacher, Env(), scenes, 43, 3, path, mode)
+                collect_trajectories(teacher, Env(), scenes, 43, 3, path, mode, save_rollout_pool=path == full)
 
             baseline = read_json(truncated / "collection_summary.json")
             summary = read_json(full / "collection_summary.json")
@@ -109,3 +109,7 @@ class TeacherDataTest(unittest.TestCase):
                 for key in ("observations", "actions", "means", "log_stds"):
                     np.testing.assert_array_equal(complete[key][shared],
                                                   cutoff[key][complete["scene_indices"][shared] * 3 + local[shared]])
+                with np.load(full / "rollout_pool.npz", allow_pickle=False) as pool:
+                    np.testing.assert_array_equal(pool["scene_indices"], [0] * 4 + [1] * 6)
+                    for key in ("observations", "actions", "means", "log_stds", "scene_indices"):
+                        np.testing.assert_array_equal(complete[key], pool[key][raw])
