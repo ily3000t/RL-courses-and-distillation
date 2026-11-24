@@ -22,6 +22,16 @@ class DistillationTest(unittest.TestCase):
         full_loss = correction_bc_loss(predicted.detach(), target, 1, "both")
         self.assertEqual(full_loss.item(), 6.25)
 
+    def test_equal_weight_keeps_both_mode_acceleration_gradient(self):
+        actions = torch.tensor([[2.0, 2.0], [1.0, 4.0]], requires_grad=True)
+        labels = torch.zeros_like(actions)
+        both = torch.autograd.grad(correction_bc_loss(actions, labels, 1, "both"), actions)[0]
+        equal = torch.autograd.grad(correction_bc_loss(actions, labels, 1, "acceleration-equal"), actions)[0]
+        torch.testing.assert_close(equal[0], both[0])
+        torch.testing.assert_close(equal[1, 0], both[1, 0])
+        self.assertEqual(equal[1, 1].item(), 0.0)
+        self.assertEqual(correction_bc_loss(actions, labels, 1, "acceleration-equal").item(), 2.25)
+
     def test_gaussian_loss_matches_teacher_to_student_kl(self):
         teacher = torch.tensor([[0.0, 0.0]])
         unit_scale = torch.zeros_like(teacher)

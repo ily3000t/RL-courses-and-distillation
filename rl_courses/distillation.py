@@ -15,7 +15,7 @@ from .training import CheckpointEvaluation
 
 
 STUDENT_METHODS = ("scratch", "bc", "soft")
-CORRECTION_SUPERVISION = ("both", "acceleration")
+CORRECTION_SUPERVISION = ("both", "acceleration", "acceleration-equal")
 
 
 def student_config(config, settings, method, device):
@@ -59,7 +59,10 @@ def correction_bc_loss(actions, targets, ordinary_rows, supervision):
     error = (actions - targets).square()
     if supervision == "both":
         return error.mean()
-    return torch.cat((error[:ordinary_rows].mean(dim=-1), error[ordinary_rows:, 0])).mean()
+    correction_error = error[ordinary_rows:, 0]
+    if supervision == "acceleration-equal":
+        correction_error = correction_error / error.shape[-1]
+    return torch.cat((error[:ordinary_rows].mean(dim=-1), correction_error)).mean()
 
 
 def train_offline(config, catalog, seed, output, dataset, steps_per_scene, correction_directory=None):

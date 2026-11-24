@@ -417,3 +417,14 @@ Ordinary rows supervise both actions. Correction rows in the acceleration
 arm supervise acceleration only. The loss averages active dimensions
 within each row, then averages equally across rows. Both arms use the
 same sampling sequence for the same seed, and export the existing actor.
+
+Use `--correction-supervision acceleration-equal` for the matched-weight
+control. For each correction row, `both` weights acceleration and the
+merge request by 0.5 each, `acceleration` weights acceleration by 1.0,
+and `acceleration-equal` weights acceleration by 0.5. The latter two
+modes give the merge request zero direct weight on correction rows.
+Ordinary rows and the batch denominator are identical across modes.
+Reuse the correction bundle and seeds, and keep 16 correction rows per
+batch. Compare with `both` to test removal of the merge-request loss at
+fixed acceleration weight, and with `acceleration` to test the
+acceleration weight at fixed action supervision.
