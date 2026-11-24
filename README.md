@@ -249,3 +249,56 @@ execution alone. The training archive is used for reproducing experiments.
 For an end-to-end check, use a teacher trained with `configs/smoke.json`
 and pass `-Config configs/smoke.json -StudentConfig configs/distillation-smoke.json
 -Seeds 42 -StepsPerScene 8 -Device cpu`.
+
+### Compare full-episode and truncated teacher collection
+
+Both modes keep 64 training rows per scene by default. In `full-episode`
+mode the collector lets the last episode reach its normal end, including
+environment timeouts and failures. It then samples uniformly without
+replacement from all collected decisions in that scene. The first 64
+rollout decisions use the same action noise as the truncated baseline.
+The continuation and row selection use separate random streams derived
+from the collection seed.
+
+`decision_steps` counts the rows the student can train on.
+`rollout_decision_steps` counts the simulator decisions used to collect them.
+`retained_tail_steps_by_difficulty` counts sampled decisions beyond the
+original quota. In `episodes.json`, `start` and `stop` index the retained
+dataset while `rollout_start` and `rollout_stop` index all collected
+decisions. Full-episode datasets also record each retained row's raw
+position as `rollout_indices`.
+
+From the repository root, run both modes with the same weighted-reference
+teacher, student seeds and frozen evaluation scenes. The truncated suite
+below rebuilds the original dataset and reuses the trained BC and soft
+students after verifying the dataset hash. Both suites reuse the same
+scratch checkpoints, and each suite evaluates its checkpoints on all
+requested splits without repeating training.
+
+```powershell
+$python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe'
+$common = @{
+    Python = $python
+    TeacherRun = 'runs/stage1-merge-weighted-only-dev-v1/merge-reference-weighted/seed-42/train'
+    ReuseScratch = 'runs/stage2-plr-validation-v1'
+    Split = @('validation', 'test', 'stress')
+    StressSeed = 20261129
+    StressCount = 96
+}
+$root = 'runs/stage2-weighted-collection-ablation-v1'
+.\scripts\run_stage2.ps1 @common -CollectionMode truncate -ReuseDistilled runs/stage2-weighted-validation-v1 -Output "$root/truncate"
+.\scripts\run_stage2.ps1 @common -CollectionMode full-episode -Output "$root/full-episode"
+foreach ($split in $common.Split) {
+    & $python -B -m rl_courses report-collection-ablation `
+        --truncate-suite "$root/truncate" --full-episode-suite "$root/full-episode" `
+        --split $split --output "$root/paired-$split"
+    if ($LASTEXITCODE -ne 0) { throw "Paired report failed for $split." }
+}
+```
+
+Use the pressure set as the primary comparison. The paired report tracks
+Hard success, missed merges, collisions and timeouts for BC and soft
+distillation. It reports percentage-point changes and exploratory intervals
+from joint resampling of student seeds and scenarios with the teacher
+checkpoint held fixed. When measuring deployment latency, run comparisons
+serially on the same machine.

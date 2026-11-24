@@ -5,6 +5,8 @@ from hashlib import sha256
 from pathlib import Path
 from statistics import mean, stdev
 
+import numpy as np
+
 from .distillation import STUDENT_METHODS
 from .evaluation import summarize
 from .records import read_json
@@ -41,15 +43,20 @@ def _read_evaluation(directory, split):
         raise ValueError(f"Exported actor differs from the deployment record: {directory}")
     return meta, train, {
         "all": summarize(rows), **{difficulty: summarize(group) for difficulty, group in groups.items()}
-    }, deployment
+    }, deployment, rows
 
 
 def summarize_distillation(root, split):
+    result, _, _, _ = _summarize_distillation(root, split)
+    return result
+
+
+def _summarize_distillation(root, split):
     data = root / "collection"
     collection = _read_completed(data)
     collection_summary = read_json(data / "collection_summary.json")
     teacher = collection["teacher"]
-    tm, _, metrics, deployment = _read_evaluation(root / "teacher" / split, split)
+    tm, _, metrics, deployment, _ = _read_evaluation(root / "teacher" / split, split)
     if (tm["checkpoint_sha256"] != teacher["checkpoint_sha256"]
             or tm["training_git_sha"] != teacher["git_sha"] or tm["seed"] != teacher["seed"]):
         raise ValueError("The evaluated teacher differs from the collection teacher.")
@@ -60,11 +67,12 @@ def summarize_distillation(root, split):
     benchmark = tuple(deployment[key] for key in deployment_fields)
     catalog = read_json(data / "scenes.json")
     student_protocol = None
-    students = {}
+    students, hard_episodes = {}, {}
     for method in STUDENT_METHODS:
         runs = {}
+        hard_episodes[method] = {}
         for path in sorted((root / method).glob(f"seed-*/{split}")):
-            meta, train, evaluation, actor = _read_evaluation(path, split)
+            meta, train, evaluation, actor, rows = _read_evaluation(path, split)
             config = train["config"].copy()
             if config.pop("method") != method or read_json(Path(meta["checkpoint"]).parent / "scenes.json") != catalog:
                 raise ValueError(f"Student method or training catalog differs: {path}")
@@ -87,8 +95,10 @@ def summarize_distillation(root, split):
             seed = meta["seed"]
             if seed in runs or path.parent.name != f"seed-{seed}":
                 raise ValueError(f"Duplicate or misplaced seed: {path}")
+            hard_episodes[method][seed] = [row for row in rows if row["difficulty"] == "hard"]
             runs[seed] = {"seed": seed, "training_git_sha": train["git_sha"],
-                          "checkpoint": meta["checkpoint"], "evaluation": evaluation,
+                          "checkpoint": meta["checkpoint"], "checkpoint_sha256": meta["checkpoint_sha256"],
+                          "evaluation": evaluation,
                           "deployment": actor, "training": read_json(Path(meta["checkpoint"]).parent / "training_summary.json")}
         students[method] = runs
     seeds = sorted(students["scratch"])
@@ -111,12 +121,96 @@ def summarize_distillation(root, split):
             "teacher_to_student_parameter_ratio": deployment["actor_parameters"] / runs[seeds[0]]["deployment"]["actor_parameters"],
             "runs": [runs[seed] for seed in seeds],
         }
-    return {"split": split, "stress_holdout_seed": tm["stress_holdout_seed"],
-            "evaluation_git_sha": tm["git_sha"], "evaluation_catalog": tm["evaluation_catalog"],
-            "student_seeds": seeds, "teacher": teacher_result, "collection": collection_summary,
-            "student_config": student_protocol[0], "students": aggregates,
-            "soft_minus_bc_hard": {
-                metric: [students["soft"][seed]["evaluation"]["hard"][metric]
-                         - students["bc"][seed]["evaluation"]["hard"][metric] for seed in seeds]
-                for metric in METRICS
-            }}
+    result = {
+        "split": split, "stress_holdout_seed": tm["stress_holdout_seed"],
+        "evaluation_git_sha": tm["git_sha"], "evaluation_catalog": tm["evaluation_catalog"],
+        "student_seeds": seeds, "teacher": teacher_result, "collection": collection_summary,
+        "student_config": student_protocol[0], "students": aggregates,
+        "soft_minus_bc_hard": {
+            metric: [students["soft"][seed]["evaluation"]["hard"][metric]
+                     - students["bc"][seed]["evaluation"]["hard"][metric] for seed in seeds]
+            for metric in METRICS
+        },
+    }
+    return result, student_protocol, eval_protocol, hard_episodes
+
+
+def _hard_indicators(episodes, seeds):
+    outcomes = np.array([[row["outcome"] for row in episodes[seed]] for seed in seeds])
+    merged = np.array([[row["merged"] for row in episodes[seed]] for seed in seeds])
+    timeout = outcomes == "timeout"
+    before_merge = timeout & ~merged
+    missed = outcomes == "missed_merge"
+    return {
+        "success_rate": outcomes == "success", "collision_rate": outcomes == "collision",
+        "timeout_rate": timeout, "pre_merge_timeout_rate": before_merge,
+        "missed_merge_rate": missed, "pre_merge_failure_rate": before_merge | missed,
+    }
+
+
+def summarize_collection_ablation(truncated_root, complete_root, split, bootstrap_seed):
+    baseline_data = truncated_root / "collection"
+    candidate_data = complete_root / "collection"
+    collection_protocol = None
+    for mode, data in (("truncate", baseline_data), ("full-episode", candidate_data)):
+        meta = _read_completed(data)
+        summary = read_json(data / "collection_summary.json")
+        config = meta["config"].copy()
+        catalog = read_json(data / "scenes.json")
+        if config.pop("collection_mode", "truncate") != mode or summary.get("collection_mode", "truncate") != mode:
+            raise ValueError(f"Expected {mode} collection in {data}.")
+        protocol = (config, catalog, meta["seed"], meta["teacher"], meta["versions"], meta["observation_fields"])
+        if collection_protocol is None:
+            collection_protocol = protocol
+        if protocol != collection_protocol:
+            raise ValueError("Both collection modes must share the teacher, seed, environment, catalog and quota.")
+        quota = config["steps_per_scene"] * len(catalog["train"])
+        cost = summary.get("rollout_decision_steps", summary["decision_steps"])
+        if (summary["decision_steps"] != quota or cost < quota
+                or (mode == "truncate" and cost != quota)
+                or (mode == "full-episode" and (summary["outcomes"].get("collection_cut", 0)
+                                               or "rollout_decision_steps" not in summary))
+                or sha256((data / "trajectories.npz").read_bytes()).hexdigest() != summary["dataset_sha256"]):
+            raise ValueError(f"Collection data, retained quota or raw interaction budget is invalid in {data}.")
+
+    baseline, base_train, base_eval, base_episodes = _summarize_distillation(truncated_root, split)
+    candidate, new_train, new_eval, new_episodes = _summarize_distillation(complete_root, split)
+    seeds = baseline["student_seeds"]
+    if base_train != new_train or base_eval != new_eval or seeds != candidate["student_seeds"]:
+        raise ValueError("Both suites must share the student settings, seeds and evaluation protocol.")
+    for left, right in zip(baseline["students"]["scratch"]["runs"], candidate["students"]["scratch"]["runs"], strict=True):
+        if left["checkpoint_sha256"] != right["checkpoint_sha256"]:
+            raise ValueError("Both suites must use the same from-scratch checkpoints.")
+    if baseline["teacher"]["evaluation"] != candidate["teacher"]["evaluation"] or base_episodes["scratch"] != new_episodes["scratch"]:
+        raise ValueError("Teacher and from-scratch evaluations must reproduce across both suites.")
+
+    # Resample seed rows and scenario columns while keeping the two policies paired.
+    repetitions = 10000
+    rng = np.random.default_rng(bootstrap_seed)
+    scene_count = len(base_episodes["bc"][seeds[0]])
+    seed_indices = rng.integers(len(seeds), size=(repetitions, len(seeds), 1))
+    scene_indices = rng.integers(scene_count, size=(repetitions, 1, scene_count))
+    comparison = {}
+    for method in ("bc", "soft"):
+        left = _hard_indicators(base_episodes[method], seeds)
+        right = _hard_indicators(new_episodes[method], seeds)
+        comparison[method] = {}
+        for metric in METRICS:
+            difference = right[metric].astype(np.int8) - left[metric]
+            samples = difference[seed_indices, scene_indices].mean(axis=(1, 2))
+            comparison[method][metric] = {
+                "truncate": float(left[metric].mean()), "full_episode": float(right[metric].mean()),
+                "full_minus_truncate_pp": float(100 * difference.mean()),
+                "per_seed_difference_pp": (100 * difference.mean(axis=1)).tolist(),
+                "exploratory_95_interval_pp": (100 * np.quantile(samples, (0.025, 0.975))).tolist(),
+            }
+    return {
+        "split": split, "evaluation_git_sha": baseline["evaluation_git_sha"],
+        "stress_holdout_seed": baseline["stress_holdout_seed"],
+        "evaluation_catalog": baseline["evaluation_catalog"], "hard_scene_count": scene_count, "student_seeds": seeds,
+        "teacher": baseline["teacher"]["checkpoint"], "student_config": baseline["student_config"],
+        "collection_seed": collection_protocol[2], "collection_config": collection_protocol[0],
+        "collections": {"truncate": baseline["collection"], "full_episode": candidate["collection"]},
+        "bootstrap": {"seed": bootstrap_seed, "repetitions": repetitions, "paired_axes": ["student_seed", "scene"]},
+        "hard_full_minus_truncate": comparison,
+    }

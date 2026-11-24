@@ -13,7 +13,7 @@ from .actor_export import export_actor
 from .catalog import make_catalog, make_stress_holdout, serialize_catalog
 from .diagnostics import comparison_inputs, run_diagnostics
 from .distillation import STUDENT_METHODS, student_config, train_offline
-from .distillation_report import summarize_distillation
+from .distillation_report import summarize_collection_ablation, summarize_distillation
 from .environment import EnvConfig, MergeEnv
 from .evaluation import evaluate
 from .opportunities import DEFAULT_REFERENCE_SPEEDS, build_profiles, validate_speeds
@@ -252,6 +252,20 @@ def distillation_report_command(args):
     print(output / "report.json")
 
 
+def collection_ablation_report_command(args):
+    result = summarize_collection_ablation(args.truncate_suite, args.full_episode_suite,
+                                           args.split, args.bootstrap_seed)
+    config = {
+        "split": args.split, "truncate_suite": str(args.truncate_suite.resolve()),
+        "full_episode_suite": str(args.full_episode_suite.resolve()), "bootstrap_seed": args.bootstrap_seed,
+    }
+    meta = manifest(config, result["student_seeds"], "cpu", args.allow_dirty)
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    write_json(output / "report.json", result)
+    print(output / "report.json")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(required=True)
@@ -307,8 +321,14 @@ def main():
     distillation_parser.add_argument("--suite", type=Path, required=True)
     distillation_parser.add_argument("--split", choices=("validation", "test", "stress"), default="validation")
     distillation_parser.set_defaults(command=distillation_report_command)
+    ablation_parser = commands.add_parser("report-collection-ablation")
+    ablation_parser.add_argument("--truncate-suite", type=Path, required=True)
+    ablation_parser.add_argument("--full-episode-suite", type=Path, required=True)
+    ablation_parser.add_argument("--split", choices=("validation", "test", "stress"), default="stress")
+    ablation_parser.add_argument("--bootstrap-seed", type=int, default=104731)
+    ablation_parser.set_defaults(command=collection_ablation_report_command)
     for command in (train_parser, eval_parser, report_parser, diagnose_parser, profile_parser,
-                    collect_parser, student_parser, distillation_parser):
+                    collect_parser, student_parser, distillation_parser, ablation_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()
