@@ -302,3 +302,30 @@ distillation. It reports percentage-point changes and exploratory intervals
 from joint resampling of student seeds and scenarios with the teacher
 checkpoint held fixed. When measuring deployment latency, run comparisons
 serially on the same machine.
+
+### Sample around the merge decision
+
+Use one full-episode rollout pool for both the uniform and merge-phase
+datasets. With a budget of 64 rows per scene, merge-phase sampling reserves
+up to 16 rows from the last 50 metres of the approach and up to 16 from
+within the merge zone before entering the target lane. It fills the
+remaining quota uniformly from all unselected rows in that scene. Sampling
+is without replacement and depends on the recorded state, independent of
+the episode outcome.
+
+```powershell
+$python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe'
+$teacher = 'runs/stage1-merge-weighted-only-dev-v1/merge-reference-weighted/seed-42/train'
+$root = 'runs/stage2-weighted-phase-sampling'
+& $python -B -m rl_courses collect-teacher --run $teacher --seed 104730 --steps-per-scene 64 `
+    --collection-mode full-episode --save-rollout-pool --output "$root/uniform/collection"
+if ($LASTEXITCODE -ne 0) { throw 'Teacher collection failed.' }
+& $python -B -m rl_courses sample-teacher --collection "$root/uniform/collection" --output "$root/merge-phase/collection"
+if ($LASTEXITCODE -ne 0) { throw 'Merge-phase sampling failed.' }
+```
+
+Point `train-student --data` to each collection in turn. Hold the student
+configuration, seed list, checkpoint selection, and evaluation scenes fixed.
+Use the saved pool hash and the dataset hashes to verify which examples
+each student received. Both groups share the rollout cost. Only the
+merge-phase group incurs the additional offline sampling cost.
