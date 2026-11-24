@@ -12,6 +12,7 @@ from stable_baselines3 import SAC
 from .actor_export import export_actor
 from .catalog import make_catalog, make_stress_holdout, serialize_catalog
 from .correction_replay import BRANCHES, run_correction_replay
+from .correction_targets import correction_replay_targets, write_correction_targets
 from .diagnostics import comparison_inputs, run_diagnostics
 from .distillation import STUDENT_METHODS, student_config, train_offline
 from .distillation_report import summarize_collection_ablation, summarize_distillation
@@ -167,6 +168,32 @@ def replay_corrections_command(args):
     output = new_output(args.output)
     write_json(output / "manifest.json", meta)
     run_with_status(output, lambda: run_correction_replay(inputs, scenes, args.intervention_steps, output))
+    print(output / "summary.json")
+
+
+def build_correction_targets_command(args):
+    source = args.collection.resolve()
+    collection = read_json(source / "manifest.json")
+    catalog = read_json(source / "scenes.json")
+    teacher_summary = read_json(source / "collection_summary.json")
+    dataset_hash = hashlib.sha256((source / "trajectories.npz").read_bytes()).hexdigest()
+    if (read_json(source / "status.json")["state"] != "completed"
+            or collection["config"]["split"] != "train"
+            or collection["observation_fields"] != list(OBSERVATION_FIELDS)
+            or dataset_hash != teacher_summary["dataset_sha256"]):
+        raise ValueError("Use the completed teacher dataset used by the replay pilots.")
+    samples, sources = correction_replay_targets(args.replay, collection, dataset_hash, catalog["train"])
+    settings = {
+        "phase": "approach_within_50m", "selected_branch": "acceleration",
+        "environment": collection["config"]["environment"], "base_dataset_sha256": dataset_hash,
+        "teacher_checkpoint_sha256": collection["teacher"]["checkpoint_sha256"],
+        "replays": sources, "base_collection": str(source),
+    }
+    meta = manifest(settings, sorted({seed for seed, _, _ in samples}), "cpu", args.allow_dirty)
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    write_json(output / "scenes.json", catalog)
+    run_with_status(output, lambda: write_correction_targets(output, samples, meta["observation_fields"]))
     print(output / "summary.json")
 
 
@@ -418,6 +445,10 @@ def main():
     correction_parser.add_argument("--scene", action="append")
     correction_parser.add_argument("--intervention-steps", type=int, default=4)
     correction_parser.set_defaults(command=replay_corrections_command)
+    build_correction_parser = commands.add_parser("build-correction-targets")
+    build_correction_parser.add_argument("--collection", type=Path, required=True)
+    build_correction_parser.add_argument("--replay", type=Path, action="append", required=True)
+    build_correction_parser.set_defaults(command=build_correction_targets_command)
     profile_parser = commands.add_parser("profile")
     profile_parser.add_argument("--config", type=Path, required=True)
     profile_parser.add_argument("--reference-speed", action="append", type=float)
@@ -456,7 +487,7 @@ def main():
     ablation_parser.add_argument("--split", choices=("validation", "test", "stress"), default="stress")
     ablation_parser.add_argument("--bootstrap-seed", type=int, default=104731)
     ablation_parser.set_defaults(command=collection_ablation_report_command)
-    for command in (train_parser, eval_parser, report_parser, diagnose_parser, correction_parser, profile_parser,
+    for command in (train_parser, eval_parser, report_parser, diagnose_parser, correction_parser, build_correction_parser, profile_parser,
                     collect_parser, sample_parser, relabel_parser, student_parser, distillation_parser, ablation_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")
