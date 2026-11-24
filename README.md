@@ -428,3 +428,27 @@ Reuse the correction bundle and seeds, and keep 16 correction rows per
 batch. Compare with `both` to test removal of the merge-request loss at
 fixed acceleration weight, and with `acceleration` to test the
 acceleration weight at fixed action supervision.
+
+### Diagnose waiting in the paired pressure replays
+
+Use the archived fresh pressure comparison of `both` and
+`acceleration-equal`. The diagnostic selects the paired scenes in which
+`both` missed the merge and the equal-weight policy either succeeded or
+timed out before merging. Each policy must reproduce its saved evaluation.
+The trace records low-speed time, gap proxies, and actual lane-change
+requests and SUMO responses.
+
+```powershell
+$python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe'
+& $python -B -m rl_courses diagnose-waiting --suite runs/stage2-weighted-correction-equal-v1 `
+    --intervention-steps 4 --output runs/stage2-pressure-waiting-diagnostics-v1
+if ($LASTEXITCODE -ne 0) { throw 'Pressure waiting diagnostic failed.' }
+```
+
+On the timed-out equal-weight trajectories, the acceleration probe starts
+after one second at or below 1 m/s near the merge. The request probe starts
+at the first decision on the merge lane covering a gap-proxy tick with no
+request. Each probe verifies the replayed traffic state and hands control
+back to the student after four decisions or upon merging. The JSON case
+table and JSONL traces are for diagnosis. They use a previously evaluated
+stress split.

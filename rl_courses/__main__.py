@@ -27,6 +27,7 @@ from .scenarios import Scene
 from .student_relabeling import relabel_student_rollouts
 from .teacher_data import COLLECTION_MODES, collect_trajectories
 from .training import train
+from .waiting_diagnostics import run_waiting_diagnostics, waiting_replay_inputs
 
 
 def train_command(args):
@@ -168,6 +169,22 @@ def replay_corrections_command(args):
     output = new_output(args.output)
     write_json(output / "manifest.json", meta)
     run_with_status(output, lambda: run_correction_replay(inputs, scenes, args.intervention_steps, output))
+    print(output / "summary.json")
+
+
+def diagnose_waiting_command(args):
+    if args.limit_per_transition is not None and args.limit_per_transition < 1:
+        raise ValueError("Use a positive case limit.")
+    config = waiting_replay_inputs(args.suite.resolve(), args.limit_per_transition)
+    if not 1 <= args.intervention_steps <= config["environment"]["max_decisions"]:
+        raise ValueError("Intervention steps must be positive and fit the original episode horizon.")
+    config.update(intervention_steps=args.intervention_steps, limit_per_transition=args.limit_per_transition)
+    meta = manifest(config, sorted(config["students"]), "cpu", args.allow_dirty)
+    if meta["versions"] != config["source_evaluation_versions"]:
+        raise ValueError("Replay requires the same runtime versions as the source evaluation.")
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    run_with_status(output, lambda: run_waiting_diagnostics(config, args.intervention_steps, output))
     print(output / "summary.json")
 
 
@@ -470,6 +487,11 @@ def main():
     correction_parser.add_argument("--scene", action="append")
     correction_parser.add_argument("--intervention-steps", type=int, default=4)
     correction_parser.set_defaults(command=replay_corrections_command)
+    waiting_parser = commands.add_parser("diagnose-waiting")
+    waiting_parser.add_argument("--suite", type=Path, required=True)
+    waiting_parser.add_argument("--limit-per-transition", type=int)
+    waiting_parser.add_argument("--intervention-steps", type=int, default=4)
+    waiting_parser.set_defaults(command=diagnose_waiting_command)
     build_correction_parser = commands.add_parser("build-correction-targets")
     build_correction_parser.add_argument("--collection", type=Path, required=True)
     build_correction_parser.add_argument("--replay", type=Path, action="append", required=True)
@@ -515,7 +537,8 @@ def main():
     ablation_parser.add_argument("--split", choices=("validation", "test", "stress"), default="stress")
     ablation_parser.add_argument("--bootstrap-seed", type=int, default=104731)
     ablation_parser.set_defaults(command=collection_ablation_report_command)
-    for command in (train_parser, eval_parser, report_parser, diagnose_parser, correction_parser, build_correction_parser, profile_parser,
+    for command in (train_parser, eval_parser, report_parser, diagnose_parser, correction_parser, waiting_parser,
+                    build_correction_parser, profile_parser,
                     collect_parser, sample_parser, relabel_parser, student_parser, distillation_parser, ablation_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")
