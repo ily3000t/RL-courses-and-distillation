@@ -382,3 +382,38 @@ the diagnostics prefer a single changed component. When both single
 changes succeed, the faster merge is selected, with acceleration breaking
 an exact tie. The JSONL records retain the original prefix, the matched
 traffic snapshot, and actions during the intervention.
+
+### Distill the verified acceleration corrections
+
+Build one correction target bundle from the five completed BC replays.
+This uses approach anchors where the student failed before merging and
+the acceleration-only intervention changed the terminal result to success.
+Each record retains both teacher action outputs for matched supervision.
+
+```powershell
+$python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe'
+$base = 'runs/stage2-weighted-phase-sampling-v1/uniform/collection'
+$output = 'runs/stage2-weighted-correction-component-v1'
+$replayArgs = @('--replay', 'runs/stage2-weighted-merge-correction-replay-v1')
+foreach ($seed in 43..46) {
+    $replayArgs += @('--replay', "runs/stage2-weighted-merge-correction-replay-seed-$seed-v1")
+}
+& $python -B -m rl_courses build-correction-targets --collection $base @replayArgs --output "$output/corrections"
+if ($LASTEXITCODE -ne 0) { throw 'Correction target build failed.' }
+
+foreach ($seed in 42..46) {
+    foreach ($supervision in @('both', 'acceleration')) {
+        & $python -B -m rl_courses train-student --config configs/stage1.json `
+            --student-config configs/distillation.json --method bc --seed $seed --data $base `
+            --corrections "$output/corrections" --correction-batch-size 16 --correction-supervision $supervision `
+            --output "$output/$supervision/seed-$seed/train"
+        if ($LASTEXITCODE -ne 0) { throw "Correction training failed for seed $seed." }
+    }
+}
+```
+
+Both arms draw 240 ordinary and 16 correction rows per 256-row batch.
+Ordinary rows supervise both actions. Correction rows in the acceleration
+arm supervise acceleration only. The loss averages active dimensions
+within each row, then averages equally across rows. Both arms use the
+same sampling sequence for the same seed, and export the existing actor.

@@ -14,7 +14,7 @@ from .catalog import make_catalog, make_stress_holdout, serialize_catalog
 from .correction_replay import BRANCHES, run_correction_replay
 from .correction_targets import correction_replay_targets, write_correction_targets
 from .diagnostics import comparison_inputs, run_diagnostics
-from .distillation import STUDENT_METHODS, student_config, train_offline
+from .distillation import CORRECTION_SUPERVISION, STUDENT_METHODS, student_config, train_offline
 from .distillation_report import summarize_collection_ablation, summarize_distillation
 from .environment import OBSERVATION_FIELDS, EnvConfig, MergeEnv
 from .evaluation import evaluate
@@ -341,6 +341,15 @@ def train_student_command(args):
     if scratch == (args.data is not None):
         raise ValueError("BC and soft distillation require --data. The scratch student does not use it.")
     config = student_config(read_json(args.config), read_json(args.student_config), args.method, args.device)
+    if (args.corrections is None) != (args.correction_supervision is None):
+        raise ValueError("Use --corrections and --correction-supervision together.")
+    if args.corrections is not None:
+        correction_batch = 16 if args.correction_batch_size is None else args.correction_batch_size
+        if args.method != "bc" or not 1 <= correction_batch < config["distillation"]["batch_size"]:
+            raise ValueError("Correction supervision requires BC and a correction batch smaller than the total batch.")
+        config["correction"] = {"supervision": args.correction_supervision, "batch_size": correction_batch}
+    elif args.correction_batch_size is not None:
+        raise ValueError("--correction-batch-size requires --corrections.")
     catalog = make_catalog(**config["scenarios"])
     serialized = serialize_catalog(catalog)
     meta = manifest(config, args.seed, config["sac"]["device"], args.allow_dirty)
@@ -364,6 +373,22 @@ def train_student_command(args):
             "collection_git_sha": collection["git_sha"], "collection_seed": collection["seed"],
             "teacher": collection["teacher"],
         }
+        if args.corrections is not None:
+            bundle = args.corrections.resolve()
+            correction = read_json(bundle / "manifest.json")
+            targets = read_json(bundle / "summary.json")
+            if (read_json(bundle / "status.json")["state"] != "completed"
+                    or correction["config"]["base_dataset_sha256"] != dataset_hash
+                    or correction["config"]["teacher_checkpoint_sha256"] != collection["teacher"]["checkpoint_sha256"]
+                    or correction["config"]["environment"] != config["environment"]
+                    or correction["observation_fields"] != meta["observation_fields"]
+                    or read_json(bundle / "scenes.json") != serialized
+                    or hashlib.sha256((bundle / "targets.npz").read_bytes()).hexdigest() != targets["targets_sha256"]):
+                raise ValueError("The correction targets do not match the base dataset and environment.")
+            meta["correction_data"] = {
+                "bundle": str(bundle), "building_git_sha": correction["git_sha"],
+                "targets_sha256": targets["targets_sha256"], "rows": targets["rows"],
+            }
     else:
         meta["scratch_scene_sampling"] = "uniform"
     output = new_output(args.output)
@@ -372,7 +397,7 @@ def train_student_command(args):
 
     def fit():
         if not scratch:
-            train_offline(config, catalog, args.seed, output, dataset, steps)
+            train_offline(config, catalog, args.seed, output, dataset, steps, args.corrections)
             return
         start = perf_counter()
         validation_steps = train({**config, "method": "uniform"}, catalog, args.seed, output)
@@ -474,6 +499,9 @@ def main():
     student_parser.add_argument("--student-config", type=Path, required=True)
     student_parser.add_argument("--method", choices=STUDENT_METHODS, required=True)
     student_parser.add_argument("--data", type=Path)
+    student_parser.add_argument("--corrections", type=Path)
+    student_parser.add_argument("--correction-supervision", choices=CORRECTION_SUPERVISION)
+    student_parser.add_argument("--correction-batch-size", type=int)
     student_parser.add_argument("--seed", type=int, required=True)
     student_parser.add_argument("--device")
     student_parser.set_defaults(command=train_student_command)

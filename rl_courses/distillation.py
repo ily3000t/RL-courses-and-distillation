@@ -8,12 +8,14 @@ from stable_baselines3 import SAC
 from torch.distributions import Normal, kl_divergence
 from torch.nn import functional as F
 
+from .correction_targets import load_correction_targets
 from .environment import EnvConfig, MergeEnv
 from .records import write_json
 from .training import CheckpointEvaluation
 
 
 STUDENT_METHODS = ("scratch", "bc", "soft")
+CORRECTION_SUPERVISION = ("both", "acceleration")
 
 
 def student_config(config, settings, method, device):
@@ -53,7 +55,14 @@ def gaussian_policy_loss(teacher_mean, teacher_log_std, student_mean, student_lo
     return kl_divergence(teacher, student).sum(dim=-1).mean()
 
 
-def train_offline(config, catalog, seed, output, dataset, steps_per_scene):
+def correction_bc_loss(actions, targets, ordinary_rows, supervision):
+    error = (actions - targets).square()
+    if supervision == "both":
+        return error.mean()
+    return torch.cat((error[:ordinary_rows].mean(dim=-1), error[ordinary_rows:, 0])).mean()
+
+
+def train_offline(config, catalog, seed, output, dataset, steps_per_scene, correction_directory=None):
     start = perf_counter()
     settings = config["distillation"]
     env = MergeEnv(output, EnvConfig(**config["environment"]))
@@ -64,16 +73,30 @@ def train_offline(config, catalog, seed, output, dataset, steps_per_scene):
         targets = load_teacher_targets(dataset, env.observation_space.shape, env.action_space.shape,
                                        len(catalog["train"]) * steps_per_scene, steps_per_scene)
         observations, actions, means, log_stds = [torch.as_tensor(array, device=model.device) for array in targets]
+        correction = config.get("correction")
+        correction_batch = correction["batch_size"] if correction else 0
+        ordinary_batch = settings["batch_size"] - correction_batch
+        if correction:
+            verified = load_correction_targets(correction_directory, env.observation_space.shape, env.action_space.shape)
+            corrected_obs, corrected_actions = [torch.as_tensor(array, device=model.device) for array in verified]
         generator = torch.Generator(device=model.device).manual_seed(seed)
         optimizer = model.actor.optimizer
         validation = CheckpointEvaluation(env, catalog["validation"], settings["validate_every"], output)
         updates = settings["updates"]
         for update in range(1, updates + 1):
             model.actor.train()
-            indices = torch.randint(len(observations), (settings["batch_size"],),
+            indices = torch.randint(len(observations), (ordinary_batch,),
                                     device=model.device, generator=generator)
-            mean, log_std, _ = model.actor.get_action_dist_params(observations[indices])
-            if config["method"] == "bc":
+            obs_batch = observations[indices]
+            if correction:
+                selected = torch.randint(len(corrected_obs), (correction_batch,),
+                                         device=model.device, generator=generator)
+                obs_batch = torch.cat((obs_batch, corrected_obs[selected]))
+            mean, log_std, _ = model.actor.get_action_dist_params(obs_batch)
+            if correction:
+                labels = torch.cat((actions[indices], corrected_actions[selected]))
+                loss = correction_bc_loss(mean.tanh(), labels, ordinary_batch, correction["supervision"])
+            elif config["method"] == "bc":
                 loss = F.mse_loss(mean.tanh(), actions[indices])
             else:
                 loss = gaussian_policy_loss(means[indices], log_stds[indices], mean, log_std)
@@ -87,10 +110,14 @@ def train_offline(config, catalog, seed, output, dataset, steps_per_scene):
                 print(f"update {update}: {config['method']} loss {float(loss.detach()):.6g}", flush=True)
                 validation.checkpoint(model, update)
         model.save(output / "final")
-        write_json(output / "training_summary.json", {
+        summary = {
             "steps": 0, "optimizer_updates": updates, "batch_size": settings["batch_size"],
             "dataset_rows": len(observations), "validation_decision_steps": validation.decision_steps,
             "wall_seconds": perf_counter() - start,
-        })
+        }
+        if correction:
+            summary.update(correction_dataset_rows=len(corrected_obs), correction_batch_size=correction_batch,
+                           correction_draws=updates * correction_batch, correction_supervision=correction["supervision"])
+        write_json(output / "training_summary.json", summary)
     finally:
         env.close()

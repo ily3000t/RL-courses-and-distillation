@@ -7,11 +7,21 @@ import torch
 from stable_baselines3 import SAC
 
 from rl_courses.actor_export import export_actor
-from rl_courses.distillation import gaussian_policy_loss, student_config
+from rl_courses.distillation import correction_bc_loss, gaussian_policy_loss, student_config
 from rl_courses.records import ROOT, read_json
 
 
 class DistillationTest(unittest.TestCase):
+    def test_acceleration_only_masks_the_correction_intent_gradient_and_keeps_row_weight(self):
+        predicted = torch.tensor([[2.0, 2.0], [1.0, 4.0]], requires_grad=True)
+        target = torch.zeros_like(predicted)
+        loss = correction_bc_loss(predicted, target, 1, "acceleration")
+        self.assertEqual(loss.item(), 2.5)
+        loss.backward()
+        torch.testing.assert_close(predicted.grad, torch.tensor([[1.0, 1.0], [1.0, 0.0]]))
+        full_loss = correction_bc_loss(predicted.detach(), target, 1, "both")
+        self.assertEqual(full_loss.item(), 6.25)
+
     def test_gaussian_loss_matches_teacher_to_student_kl(self):
         teacher = torch.tensor([[0.0, 0.0]])
         unit_scale = torch.zeros_like(teacher)
