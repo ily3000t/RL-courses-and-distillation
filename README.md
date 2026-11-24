@@ -329,3 +329,28 @@ configuration, seed list, checkpoint selection, and evaluation scenes fixed.
 Use the saved pool hash and the dataset hashes to verify which examples
 each student received. Both groups share the rollout cost. Only the
 merge-phase group incurs the additional offline sampling cost.
+
+### Relabel states visited by a student
+
+Use the uniform full-episode dataset as the control. Choose a completed
+student trained on that dataset and replay its validation-selected
+checkpoint once per training scene with deterministic actions. For each
+scene, replace up to 16 observations in each of the two priority phases
+with observations from that student's matching scene and phase. The
+original teacher supplies the new action and Gaussian targets. The
+student supplies the rollout actions used to visit the states.
+
+```powershell
+$python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe'
+$baseline = 'runs/stage2-weighted-phase-sampling-v1/uniform/collection'
+$pilot = 'runs/stage2-weighted-collection-ablation-v1/full-episode/bc/seed-42/train'
+$output = 'runs/stage2-weighted-student-relabeling/student-relabeling/collection'
+& $python -B -m rl_courses relabel-student --collection $baseline --student-run $pilot --output $output
+if ($LASTEXITCODE -ne 0) { throw 'Student relabeling failed.' }
+```
+
+Train both methods with `train-student --data` and the original seed list
+and optimizer budget. The number of rows per scene and phase stays fixed.
+The summary records additional student rollout decisions and teacher
+queries. In the output dataset, `student_rollout_indices` points to
+`student_rollouts.npz` for substituted rows and is `-1` for original rows.
