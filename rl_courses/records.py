@@ -37,6 +37,17 @@ def new_output(path):
     return path
 
 
+def run_with_status(output, operation):
+    path = output / "status.json"
+    write_json(path, {"state": "running"})
+    try:
+        operation()
+    except BaseException as error:
+        write_json(path, {"state": "failed", "error": str(error), "type": type(error).__name__})
+        raise
+    write_json(path, {"state": "completed"})
+
+
 def _command_output(*args):
     return subprocess.run(args, cwd=ROOT, check=True, text=True,
                           capture_output=True).stdout.strip()

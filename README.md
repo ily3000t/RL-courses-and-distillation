@@ -501,3 +501,35 @@ $python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe'
 Use `cases.json` for the paired outcomes and `teacher_from_start.json`
 for the per-scenario outcomes and entry speeds. Keep the two denominators
 separate when reporting results.
+
+### Compare small SAC warm starts at matched online budgets
+
+Use five matched student seeds. All arms use the uniform training sampler
+and the same small SAC architecture and online settings. Initialize the
+ordinary and correction BC arms from their fixed final offline checkpoints,
+which share a teacher, demonstration dataset and optimizer budget. Transfer
+the actor's mean and hidden layers. Initialize the log-standard-deviation
+head, critic, optimizer and replay buffer with the ordinary SAC procedure
+in all arms. Save the policy at 0, 15,000 and 30,000 online decisions.
+
+```powershell
+$python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe'
+$suite = 'runs/stage2-warm-start-budget-v1'
+& $python -B -m rl_courses freeze-warm-start --config configs/stage1.json `
+    --student-config configs/distillation.json `
+    --bc-root runs/stage2-weighted-collection-ablation-v1/full-episode/bc `
+    --correction-root runs/stage2-weighted-correction-equal-v1/acceleration-equal `
+    --output $suite
+& $python -B -m rl_courses run-warm-start --suite $suite --workers 6
+& $python -B -m rl_courses report-warm-start --suite $suite --output "$suite/report-dev"
+```
+
+The default development pressure catalog uses seed 20261203. The final
+pressure catalog uses seed 20261205 and stays unused during development.
+After freezing the comparison, run the saved checkpoints on this second
+catalog using `--split final-stress` with the run and report commands.
+The runner reuses completed training and evaluation attempts. The report
+includes paired differences, separate archived preparation and online
+interaction costs, and the first measured budget with at least 60%
+success and zero observed collisions. This threshold is a simulator
+comparison criterion.

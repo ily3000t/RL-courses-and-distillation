@@ -21,7 +21,7 @@ from .evaluation import evaluate
 from .opportunities import DEFAULT_REFERENCE_SPEEDS, build_profiles, validate_speeds
 from .phase_sampling import WINDOW_METERS, sample_merge_phases
 from .pre_wait_replay import ANCHORS, SLOWING_SPEED_MPS, run_pre_wait_replay
-from .records import manifest, new_output, read_json, write_json
+from .records import manifest, new_output, read_json, run_with_status, write_json
 from .reporting import summarize_suite
 from .sampling import COMPARISONS, METHODS, PROFILE_METHODS
 from .scenarios import Scene
@@ -30,6 +30,8 @@ from .takeover_diagnostics import run_takeover_diagnostics, takeover_inputs
 from .teacher_data import COLLECTION_MODES, collect_trajectories
 from .training import train
 from .waiting_diagnostics import WAIT_SECONDS, WAIT_SPEED_MPS, run_waiting_diagnostics, waiting_replay_inputs
+from .warm_start import SPLITS, file_hash, run_warm_start_suite, warm_start_design
+from .warm_start_report import report_warm_start
 
 
 def train_command(args):
@@ -102,17 +104,6 @@ def evaluate_command(args):
             export_actor(model, output)
 
     run_with_status(output, predict)
-
-
-def run_with_status(output, operation):
-    path = output / "status.json"
-    write_json(path, {"state": "running"})
-    try:
-        operation()
-    except BaseException as error:
-        write_json(path, {"state": "failed", "error": str(error), "type": type(error).__name__})
-        raise
-    write_json(path, {"state": "completed"})
 
 
 def report_command(args):
@@ -485,6 +476,41 @@ def collection_ablation_report_command(args):
     print(output / "report.json")
 
 
+def freeze_warm_start_command(args):
+    design = warm_start_design(
+        read_json(args.config), read_json(args.student_config), args.bc_root, args.correction_root,
+        args.seeds, args.budgets, (args.dev_stress_seed, args.final_stress_seed), args.stress_count,
+        args.success_target, args.device,
+    )
+    meta = manifest(design, design["student_seeds"], args.device, args.allow_dirty)
+    output = new_output(args.output)
+    write_json(output / "protocol.json", meta)
+    print(output / "protocol.json")
+
+
+def run_warm_start_command(args):
+    suite = args.suite.resolve(strict=True)
+    path = suite / "protocol.json"
+    protocol = read_json(path)
+    config = {"suite": str(suite), "split": args.split, "workers": args.workers}
+    meta = manifest(config, protocol["seed"], protocol["versions"]["device"], args.allow_dirty)
+    if any(meta[key] != protocol[key] for key in ("git_sha", "git_status", "versions")):
+        raise ValueError("Run the frozen suite using the recorded commit and runtime.")
+    meta["protocol_sha256"] = file_hash(path)
+    run_warm_start_suite(suite, protocol, meta, args.split, args.workers)
+
+
+def report_warm_start_command(args):
+    suite = args.suite.resolve(strict=True)
+    data = report_warm_start(suite, args.split)
+    meta = manifest({"suite": str(suite), "split": args.split, "protocol_sha256": data["protocol_sha256"]},
+                    data["student_seeds"], "cpu", args.allow_dirty)
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    write_json(output / "report.json", data)
+    print(output / "report.json")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(required=True)
@@ -583,9 +609,33 @@ def main():
     ablation_parser.add_argument("--split", choices=("validation", "test", "stress"), default="stress")
     ablation_parser.add_argument("--bootstrap-seed", type=int, default=104731)
     ablation_parser.set_defaults(command=collection_ablation_report_command)
+    freeze_warm_start = commands.add_parser("freeze-warm-start")
+    freeze_warm_start.add_argument("--config", type=Path, required=True)
+    freeze_warm_start.add_argument("--student-config", type=Path, required=True)
+    freeze_warm_start.add_argument("--bc-root", type=Path, required=True)
+    freeze_warm_start.add_argument("--correction-root", type=Path, required=True)
+    freeze_warm_start.add_argument("--seeds", type=int, nargs="+", default=list(range(42, 47)))
+    freeze_warm_start.add_argument("--budgets", type=int, nargs="+", default=[0, 15000, 30000])
+    freeze_warm_start.add_argument("--dev-stress-seed", type=int, default=20261203)
+    freeze_warm_start.add_argument("--final-stress-seed", type=int, default=20261205)
+    freeze_warm_start.add_argument("--stress-count", type=int, default=96)
+    freeze_warm_start.add_argument("--success-target", type=float, default=0.60)
+    freeze_warm_start.add_argument("--device", choices=("cpu", "cuda"), default="cpu")
+    freeze_warm_start.set_defaults(command=freeze_warm_start_command)
+    run_warm_start = commands.add_parser("run-warm-start")
+    run_warm_start.add_argument("--suite", type=Path, required=True)
+    run_warm_start.add_argument("--split", choices=SPLITS, default=SPLITS[0])
+    run_warm_start.add_argument("--workers", type=int, default=3)
+    run_warm_start.add_argument("--allow-dirty", action="store_true")
+    run_warm_start.set_defaults(command=run_warm_start_command)
+    warm_start_report = commands.add_parser("report-warm-start")
+    warm_start_report.add_argument("--suite", type=Path, required=True)
+    warm_start_report.add_argument("--split", choices=SPLITS, default=SPLITS[0])
+    warm_start_report.set_defaults(command=report_warm_start_command)
     for command in (train_parser, eval_parser, report_parser, diagnose_parser, correction_parser, pre_wait_parser,
                     takeover_parser, waiting_parser, build_correction_parser, profile_parser,
-                    collect_parser, sample_parser, relabel_parser, student_parser, distillation_parser, ablation_parser):
+                    collect_parser, sample_parser, relabel_parser, student_parser, distillation_parser, ablation_parser,
+                    freeze_warm_start, warm_start_report):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()
