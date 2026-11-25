@@ -54,3 +54,12 @@ class CorrectionReplayTest(unittest.TestCase):
         self.assertEqual(output["teacher_decisions"], 1)
         np.testing.assert_array_equal(env.actions, [student_action, [teacher_action[0], student_action[1]], student_action])
         self.assertEqual(output["terminal_outcome"], "success")
+
+        takeover = _branch(
+            env, Scene("test", "hard", 42, 2000), lambda obs: student_action, lambda obs: teacher_action,
+            observations, [student_action], {}, Anchor("in_merge_zone_unmerged", 1, {"time_s": 0.5}),
+            BRANCHES["joint"], 2, stop_on_merge=False,
+        )
+        self.assertEqual(takeover["teacher_decisions"], 2)
+        np.testing.assert_array_equal(env.actions, [student_action, teacher_action, teacher_action])
+        self.assertEqual(takeover["terminal_outcome"], "success")

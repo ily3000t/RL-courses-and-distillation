@@ -26,6 +26,7 @@ from .reporting import summarize_suite
 from .sampling import COMPARISONS, METHODS, PROFILE_METHODS
 from .scenarios import Scene
 from .student_relabeling import relabel_student_rollouts
+from .takeover_diagnostics import run_takeover_diagnostics, takeover_inputs
 from .teacher_data import COLLECTION_MODES, collect_trajectories
 from .training import train
 from .waiting_diagnostics import WAIT_SECONDS, WAIT_SPEED_MPS, run_waiting_diagnostics, waiting_replay_inputs
@@ -193,6 +194,17 @@ def replay_pre_wait_command(args):
     output = new_output(args.output)
     write_json(output / "manifest.json", meta)
     run_with_status(output, lambda: run_pre_wait_replay(inputs, scenes, args.intervention_steps, output))
+    print(output / "summary.json")
+
+
+def diagnose_takeover_command(args):
+    config = takeover_inputs(args.suite.resolve(), args.limit)
+    meta = manifest(config, sorted({case["student_seed"] for case in config["cases"]}), "cpu", args.allow_dirty)
+    if meta["versions"] != config["source_replay_versions"]:
+        raise ValueError("Replay requires the same runtime versions as the source pre-wait suite.")
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    run_with_status(output, lambda: run_takeover_diagnostics(config, output))
     print(output / "summary.json")
 
 
@@ -517,6 +529,10 @@ def main():
     pre_wait_parser.add_argument("--scene", action="append")
     pre_wait_parser.add_argument("--intervention-steps", type=int, default=4)
     pre_wait_parser.set_defaults(command=replay_pre_wait_command)
+    takeover_parser = commands.add_parser("diagnose-takeover")
+    takeover_parser.add_argument("--suite", type=Path, required=True)
+    takeover_parser.add_argument("--limit", type=int)
+    takeover_parser.set_defaults(command=diagnose_takeover_command)
     waiting_parser = commands.add_parser("diagnose-waiting")
     waiting_parser.add_argument("--suite", type=Path, required=True)
     waiting_parser.add_argument("--limit-per-transition", type=int)
@@ -567,8 +583,8 @@ def main():
     ablation_parser.add_argument("--split", choices=("validation", "test", "stress"), default="stress")
     ablation_parser.add_argument("--bootstrap-seed", type=int, default=104731)
     ablation_parser.set_defaults(command=collection_ablation_report_command)
-    for command in (train_parser, eval_parser, report_parser, diagnose_parser, correction_parser, pre_wait_parser, waiting_parser,
-                    build_correction_parser, profile_parser,
+    for command in (train_parser, eval_parser, report_parser, diagnose_parser, correction_parser, pre_wait_parser,
+                    takeover_parser, waiting_parser, build_correction_parser, profile_parser,
                     collect_parser, sample_parser, relabel_parser, student_parser, distillation_parser, ablation_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")

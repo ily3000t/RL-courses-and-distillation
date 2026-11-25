@@ -58,7 +58,8 @@ def _student_episode(env, scene, student):
             return observations, actions, anchors, {**info, "return": reward_total, "decisions": len(actions)}
 
 
-def _branch(env, scene, student, teacher, observations, actions, baseline, anchor, mask, horizon):
+def _branch(env, scene, student, teacher, observations, actions, baseline, anchor, mask, horizon, *,
+            stop_on_merge=True):
     observation, info = env.reset(seed=scene.seed, options={"scene": scene})
     reward_total = 0.0
     for decision, action in enumerate(actions[:anchor.decision]):
@@ -84,7 +85,7 @@ def _branch(env, scene, student, teacher, observations, actions, baseline, ancho
                                      or not np.array_equal(student_action, actions[decision])):
                 raise RuntimeError(f"Student control branch diverged in {scene.scene_id} at decision {decision}.")
             action = student_action
-            if uses_teacher and decision - anchor.decision < horizon and not info["merged"]:
+            if uses_teacher and decision - anchor.decision < horizon and (not stop_on_merge or not info["merged"]):
                 teacher_action = teacher(observation)
                 action = np.where(teacher_channels, teacher_action, student_action)
                 intervention.append({

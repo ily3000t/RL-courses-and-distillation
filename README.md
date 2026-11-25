@@ -480,3 +480,24 @@ spending at least one continuous second at or below 1 m/s on the merge
 lane. The summary records rescues, handback timing, regressions and
 other outcomes. The case table records both verified branches at
 each available anchor.
+
+### Test teacher takeover through the end of the episode
+
+Use the frozen pre-wait suite with its `protocol.json` and completed
+`seed-*/cases.json` runs. Select the sustained waiting timeouts from the
+Hard training catalog. At the recorded merge-lane entry decision,
+verify the student control and replay a matched branch in which the same
+teacher controls acceleration and merge requests through termination.
+The original episode deadline applies even after merging. Run the teacher
+from the start once per distinct scenario to measure what it achieves
+when it also controls the approach.
+
+```powershell
+$python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe'
+& $python -B -m rl_courses diagnose-takeover --suite runs/stage2-weighted-pre-wait-probe-v1 `
+    --output runs/stage2-weighted-teacher-takeover-v1
+```
+
+Use `cases.json` for the paired outcomes and `teacher_from_start.json`
+for the per-scenario outcomes and entry speeds. Keep the two denominators
+separate when reporting results.
