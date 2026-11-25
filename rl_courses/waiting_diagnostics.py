@@ -137,7 +137,7 @@ def _trace_summary(ticks, step_seconds):
     }
 
 
-def _rollout(env, scene, predict, test_anchors):
+def _rollout(env, scene, predict, test_anchors, *, capture=None):
     observation, info = env.reset(seed=scene.seed, options={"scene": scene})
     observations, actions, ticks, anchors = [], [], [], {}
     env.trace_tick = ticks.append
@@ -146,6 +146,8 @@ def _rollout(env, scene, predict, test_anchors):
         while True:
             action = predict(observation)
             decision, first_tick = len(actions), len(ticks)
+            if capture is not None and not info["merged"]:
+                capture(env, observation, ticks, decision, anchors)
             candidate_gap = False
             if test_anchors and not info["merged"]:
                 _, near, zone, _ = _phase_masks(observation[None])

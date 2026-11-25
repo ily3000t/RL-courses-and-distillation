@@ -452,3 +452,31 @@ request. Each probe verifies the replayed traffic state and hands control
 back to the student after four decisions or upon merging. The JSON case
 table and JSONL traces are for diagnosis. They use a previously evaluated
 stress split.
+
+### Probe acceleration before sustained waiting
+
+Run the equal-weight student's saved policy on the Hard training catalog.
+The two anchors are the first unmerged decision on the merge lane above
+1 m/s and the first decision there at a speed in (1, 5] m/s. Both precede
+the first tick at or below 1 m/s on that lane. At each anchor, replay the
+control and replace only acceleration with the reference-weighted
+teacher for up to four decisions. Use the original episode deadline and
+require the student to continue after the intervention.
+
+```powershell
+$python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe'
+$teacher = 'runs/stage1-merge-weighted-only-dev-v1/merge-reference-weighted/seed-42/train'
+$root = 'runs/stage2-weighted-pre-wait-probe-v1'
+foreach ($seed in 42..46) {
+    $student = "runs/stage2-weighted-correction-equal-v1/acceleration-equal/seed-$seed/train"
+    & $python -B -m rl_courses replay-pre-wait --teacher-run $teacher --student-run $student `
+        --intervention-steps 4 --output "$root/seed-$seed"
+    if ($LASTEXITCODE -ne 0) { throw "Pre-wait replay failed for seed $seed." }
+}
+```
+
+The primary cohort consists of baseline timeouts without merging after
+spending at least one continuous second at or below 1 m/s on the merge
+lane. The summary records rescues, handback timing, regressions and
+other outcomes. The case table records both verified branches at
+each available anchor.

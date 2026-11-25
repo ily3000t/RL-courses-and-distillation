@@ -20,6 +20,7 @@ from .environment import OBSERVATION_FIELDS, EnvConfig, MergeEnv
 from .evaluation import evaluate
 from .opportunities import DEFAULT_REFERENCE_SPEEDS, build_profiles, validate_speeds
 from .phase_sampling import WINDOW_METERS, sample_merge_phases
+from .pre_wait_replay import ANCHORS, SLOWING_SPEED_MPS, run_pre_wait_replay
 from .records import manifest, new_output, read_json, write_json
 from .reporting import summarize_suite
 from .sampling import COMPARISONS, METHODS, PROFILE_METHODS
@@ -27,7 +28,7 @@ from .scenarios import Scene
 from .student_relabeling import relabel_student_rollouts
 from .teacher_data import COLLECTION_MODES, collect_trajectories
 from .training import train
-from .waiting_diagnostics import run_waiting_diagnostics, waiting_replay_inputs
+from .waiting_diagnostics import WAIT_SECONDS, WAIT_SPEED_MPS, run_waiting_diagnostics, waiting_replay_inputs
 
 
 def train_command(args):
@@ -143,7 +144,7 @@ def diagnose_command(args):
     print(output / "episodes.json")
 
 
-def replay_corrections_command(args):
+def _hard_replay_inputs(args):
     runs = (args.teacher_run, args.student_run)
     for run in runs:
         if read_json(run / "status.json")["state"] != "completed":
@@ -156,6 +157,11 @@ def replay_corrections_command(args):
         raise ValueError("Correction replay uses Hard training scenes only.")
     if not 1 <= args.intervention_steps <= inputs[0]["environment"]["max_decisions"]:
         raise ValueError("Intervention steps must be positive and fit the original episode horizon.")
+    return inputs, scenes
+
+
+def replay_corrections_command(args):
+    inputs, scenes = _hard_replay_inputs(args)
     config = {
         "split": "train", "evaluation_catalog": [asdict(scene) for scene in scenes],
         "environment": inputs[0]["environment"], "approach_window_m": WINDOW_METERS,
@@ -169,6 +175,24 @@ def replay_corrections_command(args):
     output = new_output(args.output)
     write_json(output / "manifest.json", meta)
     run_with_status(output, lambda: run_correction_replay(inputs, scenes, args.intervention_steps, output))
+    print(output / "summary.json")
+
+
+def replay_pre_wait_command(args):
+    inputs, scenes = _hard_replay_inputs(args)
+    config = {
+        "split": "train", "evaluation_catalog": [asdict(scene) for scene in scenes],
+        "environment": inputs[0]["environment"], "anchors": list(ANCHORS),
+        "slowing_speed_mps": SLOWING_SPEED_MPS, "wait_speed_mps": WAIT_SPEED_MPS, "wait_seconds": WAIT_SECONDS,
+        "intervention_steps": args.intervention_steps, "teacher_channels": BRANCHES["acceleration"],
+        "stop_on_merge": True, "continuation_policy": "student", "policy_actions": "deterministic_sac",
+        **{name: {key: item for key, item in row.items() if key not in ("scenes", "environment")}
+           for name, row in zip(("teacher", "student"), inputs, strict=True)},
+    }
+    meta = manifest(config, [row["seed"] for row in inputs], "cpu", args.allow_dirty)
+    output = new_output(args.output)
+    write_json(output / "manifest.json", meta)
+    run_with_status(output, lambda: run_pre_wait_replay(inputs, scenes, args.intervention_steps, output))
     print(output / "summary.json")
 
 
@@ -487,6 +511,12 @@ def main():
     correction_parser.add_argument("--scene", action="append")
     correction_parser.add_argument("--intervention-steps", type=int, default=4)
     correction_parser.set_defaults(command=replay_corrections_command)
+    pre_wait_parser = commands.add_parser("replay-pre-wait")
+    pre_wait_parser.add_argument("--teacher-run", type=Path, required=True)
+    pre_wait_parser.add_argument("--student-run", type=Path, required=True)
+    pre_wait_parser.add_argument("--scene", action="append")
+    pre_wait_parser.add_argument("--intervention-steps", type=int, default=4)
+    pre_wait_parser.set_defaults(command=replay_pre_wait_command)
     waiting_parser = commands.add_parser("diagnose-waiting")
     waiting_parser.add_argument("--suite", type=Path, required=True)
     waiting_parser.add_argument("--limit-per-transition", type=int)
@@ -537,7 +567,7 @@ def main():
     ablation_parser.add_argument("--split", choices=("validation", "test", "stress"), default="stress")
     ablation_parser.add_argument("--bootstrap-seed", type=int, default=104731)
     ablation_parser.set_defaults(command=collection_ablation_report_command)
-    for command in (train_parser, eval_parser, report_parser, diagnose_parser, correction_parser, waiting_parser,
+    for command in (train_parser, eval_parser, report_parser, diagnose_parser, correction_parser, pre_wait_parser, waiting_parser,
                     build_correction_parser, profile_parser,
                     collect_parser, sample_parser, relabel_parser, student_parser, distillation_parser, ablation_parser):
         command.add_argument("--output", type=Path, required=True)
