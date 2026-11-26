@@ -192,6 +192,30 @@ cost is recorded separately from SAC interactions.
 probability and the statistics available when the scene was selected,
 followed by the observed outcome and its eligibility for rate updates.
 
+## Compare curricula on a small SAC policy
+
+Compare uniform sampling, failure feedback, and reference-weighted failure
+feedback with `[64, 64]` SAC actors. Each method uses five seeds and
+120,000 training decisions per seed. Reuse archived uniform runs only when
+their settings, catalog, runtime, and budget match. Evaluate each method's
+validation-selected checkpoint on the same new pressure catalog. The
+primary paired comparison isolates the reference weights by comparing
+them with failure feedback alone.
+
+```powershell
+$python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe'
+$suite = 'runs/stage1-small-sac-curriculum-v1'
+& $python -B -m scripts.run_small_curriculum freeze --suite $suite `
+    --profiles runs/stage1-opportunities-v1/opportunities.json `
+    --uniform-root runs/stage2-plr-validation-v1/scratch
+& $python -B -m scripts.run_small_curriculum run --suite $suite --workers 6
+```
+
+The suite records its frozen configuration and the archived controls'
+checkpoint hashes. A repeat invocation reuses completed attempts and
+creates new directories for failed attempts. The report keeps scenario
+and training seed paired when estimating differences.
+
 ## Compare reference weighting with hard gating
 
 `merge-reference-weighted` uses the same recent failure estimate as
