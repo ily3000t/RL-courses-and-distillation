@@ -205,10 +205,10 @@ them with failure feedback alone.
 ```powershell
 $python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe'
 $suite = 'runs/stage1-small-sac-curriculum-v1'
-& $python -B -m scripts.run_small_curriculum freeze --suite $suite `
+& $python -B -m rl_courses.small_curriculum freeze --suite $suite `
     --profiles runs/stage1-opportunities-v1/opportunities.json `
     --uniform-root runs/stage2-plr-validation-v1/scratch
-& $python -B -m scripts.run_small_curriculum run --suite $suite --workers 6
+& $python -B -m rl_courses.small_curriculum run --suite $suite --workers 6
 ```
 
 The suite records its frozen configuration and the archived controls'
