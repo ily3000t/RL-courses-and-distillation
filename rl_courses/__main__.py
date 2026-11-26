@@ -25,6 +25,7 @@ from .records import manifest, new_output, read_json, run_with_status, write_jso
 from .reporting import summarize_suite
 from .sampling import COMPARISONS, METHODS, PROFILE_METHODS
 from .scenarios import Scene
+from .screening_ablation import freeze_screening, run_screening
 from .student_relabeling import relabel_student_rollouts
 from .takeover_diagnostics import run_takeover_diagnostics, takeover_inputs
 from .teacher_data import COLLECTION_MODES, collect_trajectories
@@ -511,6 +512,15 @@ def report_warm_start_command(args):
     print(output / "report.json")
 
 
+def freeze_screening_command(args):
+    print(freeze_screening(args.reference.resolve(strict=True), args.seeds, args.stress_seed,
+                           args.stress_count, args.output, args.allow_dirty))
+
+
+def run_screening_command(args):
+    print(run_screening(args.suite.resolve(strict=True), args.workers, args.allow_dirty))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(required=True)
@@ -632,10 +642,21 @@ def main():
     warm_start_report.add_argument("--suite", type=Path, required=True)
     warm_start_report.add_argument("--split", choices=SPLITS, default=SPLITS[0])
     warm_start_report.set_defaults(command=report_warm_start_command)
+    freeze_screening_parser = commands.add_parser("freeze-screening")
+    freeze_screening_parser.add_argument("--reference", type=Path, required=True)
+    freeze_screening_parser.add_argument("--seeds", type=int, nargs="+")
+    freeze_screening_parser.add_argument("--stress-seed", type=int, default=20261206)
+    freeze_screening_parser.add_argument("--stress-count", type=int, default=96)
+    freeze_screening_parser.set_defaults(command=freeze_screening_command)
+    screening_parser = commands.add_parser("run-screening")
+    screening_parser.add_argument("--suite", type=Path, required=True)
+    screening_parser.add_argument("--workers", type=int, default=8)
+    screening_parser.add_argument("--allow-dirty", action="store_true")
+    screening_parser.set_defaults(command=run_screening_command)
     for command in (train_parser, eval_parser, report_parser, diagnose_parser, correction_parser, pre_wait_parser,
                     takeover_parser, waiting_parser, build_correction_parser, profile_parser,
                     collect_parser, sample_parser, relabel_parser, student_parser, distillation_parser, ablation_parser,
-                    freeze_warm_start, warm_start_report):
+                    freeze_warm_start, warm_start_report, freeze_screening_parser):
         command.add_argument("--output", type=Path, required=True)
         command.add_argument("--allow-dirty", action="store_true")
     args = parser.parse_args()

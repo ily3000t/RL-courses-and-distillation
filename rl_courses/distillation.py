@@ -65,7 +65,7 @@ def correction_bc_loss(actions, targets, ordinary_rows, supervision):
     return torch.cat((error[:ordinary_rows].mean(dim=-1), correction_error)).mean()
 
 
-def train_offline(config, catalog, seed, output, dataset, steps_per_scene, correction_directory=None):
+def train_offline(config, catalog, seed, output, dataset, steps_per_scene, correction_directory=None, *, validate=True):
     start = perf_counter()
     settings = config["distillation"]
     env = MergeEnv(output, EnvConfig(**config["environment"]))
@@ -84,7 +84,7 @@ def train_offline(config, catalog, seed, output, dataset, steps_per_scene, corre
             corrected_obs, corrected_actions = [torch.as_tensor(array, device=model.device) for array in verified]
         generator = torch.Generator(device=model.device).manual_seed(seed)
         optimizer = model.actor.optimizer
-        validation = CheckpointEvaluation(env, catalog["validation"], settings["validate_every"], output)
+        validation = CheckpointEvaluation(env, catalog["validation"], settings["validate_every"], output) if validate else None
         updates = settings["updates"]
         for update in range(1, updates + 1):
             model.actor.train()
@@ -109,13 +109,13 @@ def train_offline(config, catalog, seed, output, dataset, steps_per_scene, corre
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.actor.parameters(), 10, error_if_nonfinite=True)
             optimizer.step()
-            if update % settings["validate_every"] == 0 or update == updates:
+            if validation is not None and (update % settings["validate_every"] == 0 or update == updates):
                 print(f"update {update}: {config['method']} loss {float(loss.detach()):.6g}", flush=True)
                 validation.checkpoint(model, update)
         model.save(output / "final")
         summary = {
             "steps": 0, "optimizer_updates": updates, "batch_size": settings["batch_size"],
-            "dataset_rows": len(observations), "validation_decision_steps": validation.decision_steps,
+            "dataset_rows": len(observations), "validation_decision_steps": validation.decision_steps if validation else 0,
             "wall_seconds": perf_counter() - start,
         }
         if correction:

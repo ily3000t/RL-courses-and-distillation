@@ -1,5 +1,7 @@
 """Export teacher targets from successful short acceleration interventions."""
 
+from collections import Counter, defaultdict
+from dataclasses import dataclass
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -15,12 +17,27 @@ def _sha(path):
     return sha256(path.read_bytes()).hexdigest()
 
 
+@dataclass(frozen=True)
+class CorrectionClip:
+    pilot_seed: int
+    scene_id: str
+    steps: list
+    selected: bool
+
+
 def correction_replay_targets(replays, collection, base_dataset_hash, catalog):
+    clips, sources = correction_replay_clips(replays, collection, base_dataset_hash, catalog)
+    if not clips:
+        raise ValueError("No verified approach acceleration corrections were found.")
+    return clip_targets(clips), sources
+
+
+def correction_replay_clips(replays, collection, base_dataset_hash, catalog, *, include_unselected=False):
     phase = PRIORITY_PHASES[0]
     training_scenes = {row["scene_id"]: row for row in catalog if row["difficulty"] == "hard"}
     teacher = collection["teacher"]
     replay_protocol = None
-    samples, sources = [], {}
+    clips, sources = [], {}
     for directory in replays:
         meta = read_json(directory / "manifest.json")
         config = meta["config"]
@@ -55,20 +72,23 @@ def correction_replay_targets(replays, collection, base_dataset_hash, catalog):
                 if scene in seen or row["scene_seed"] != training_scenes[scene]["seed"]:
                     raise ValueError(f"Duplicate or inconsistent replay anchor: {scene}.")
                 seen.add(scene)
-                if row["selected_branch"] != "acceleration":
-                    continue
+                selected = row["selected_branch"] == "acceleration"
                 branches = row["branches"]
+                failed = branches["student"]["terminal_outcome"] in PRE_MERGE_FAILURES
+                if not selected and not (include_unselected and failed):
+                    continue
                 branch = branches["acceleration"]
-                if (branches["student"]["terminal_outcome"] not in PRE_MERGE_FAILURES
-                        or branch["terminal_outcome"] != "success" or branch["teacher_channels"] != [True, False]
-                        or not 1 <= len(branch["intervention"]) <= config["intervention_steps"]
-                        or len(branch["intervention"]) != branch["teacher_decisions"]):
-                    raise ValueError(f"Invalid selected correction: {scene}.")
-                for offset, step in enumerate(branch["intervention"]):
+                steps = branch["intervention"]
+                if (not failed or (selected and branch["terminal_outcome"] != "success")
+                        or branch["teacher_channels"] != [True, False]
+                        or not 1 <= len(steps) <= config["intervention_steps"]
+                        or len(steps) != branch["teacher_decisions"]):
+                    raise ValueError(f"Invalid acceleration correction: {scene}.")
+                for offset, step in enumerate(steps):
                     if (step["decision"] != row["anchor_decision"] + offset
                             or step["applied_action"] != [step["teacher_action"][0], step["student_action"][1]]):
                         raise ValueError(f"Correction steps do not match the intervention: {scene}.")
-                    samples.append((seed, scene, step))
+                clips.append(CorrectionClip(seed, scene, steps, selected))
         summary = read_json(directory / "summary.json")
         if len(seen) != summary["anchors_by_phase"][phase]:
             raise ValueError(f"Replay records are incomplete: {directory}.")
@@ -76,10 +96,28 @@ def correction_replay_targets(replays, collection, base_dataset_hash, catalog):
                          "branches_sha256": _sha(records), "student_checkpoint_sha256": student["checkpoint_sha256"],
                          **{key: summary[key] for key in ("student_baseline_decision_steps", "branch_replay_decision_steps",
                                                           "teacher_decision_steps")}}
-    if not samples:
-        raise ValueError("No verified approach acceleration corrections were found.")
-    samples.sort(key=lambda row: (row[0], row[1], row[2]["decision"]))
-    return samples, [sources[seed] for seed in sorted(sources)]
+    clips.sort(key=lambda clip: (clip.pilot_seed, clip.scene_id))
+    return clips, [sources[seed] for seed in sorted(sources)]
+
+
+def clip_targets(clips):
+    return [(clip.pilot_seed, clip.scene_id, step) for clip in clips for step in clip.steps]
+
+
+def sample_control_clips(clips, seed):
+    pools = defaultdict(list)
+    quotas = Counter()
+    for clip in clips:
+        key = clip.pilot_seed, len(clip.steps)
+        pools[key].append(clip)
+        if clip.selected:
+            quotas[key] += 1
+    if not quotas:
+        raise ValueError("The random control requires a nonempty screened cohort.")
+    rng = np.random.default_rng(seed)
+    sample = [pools[key][index] for key, count in sorted(quotas.items())
+              for index in rng.choice(len(pools[key]), count, replace=False)]
+    return sorted(sample, key=lambda clip: (clip.pilot_seed, clip.scene_id))
 
 
 def write_correction_targets(output, samples, observation_fields):

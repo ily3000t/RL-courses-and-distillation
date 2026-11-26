@@ -533,3 +533,25 @@ includes paired differences, separate archived preparation and online
 interaction costs, and the first measured budget with at least 60%
 success and zero observed collisions. This threshold is a simulator
 comparison criterion.
+
+### Compare screened and random offline corrections
+
+Rebuild the approach acceleration candidates from the archived replay
+branches. Keep a candidate if the original student failed before merging.
+Random subsets draw whole clips without replacement and match the verified
+subset's clip counts by replay student seed and clip length. Random selection
+can include verified clips. The two fixed random seeds are 104733 and 104734.
+
+```powershell
+$python = 'E:\Programs\EnvAnaconda3\envs\pytorch\python.exe'
+$suite = 'runs/stage2-offline-screening-v1'
+& $python -B -m rl_courses freeze-screening --reference runs/stage2-warm-start-budget-v1 --output $suite
+& $python -B -m rl_courses run-screening --suite $suite --workers 8
+```
+
+The archived ordinary and screened BC checkpoints are their final fixed-update
+snapshots. The two random arms reuse the screened arm's training device,
+demonstrations, loss weights, batch sizes, student seeds and update count.
+No online training is used. The new 96-scenario stress catalog is frozen
+before training. The primary paired comparison uses the screened arm and
+the mean of both random arms within each student seed and scenario.
